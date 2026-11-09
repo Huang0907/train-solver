@@ -38,6 +38,10 @@
 
 本机进程里，桌面客户端与命令行都调用同一个 Runner；Runner 通过 `TrainClient` 对接训练平台、通过 `solver/` 对接 DeepSeek、通过 `judge.py` 做编译与样例比对，每次会话的全部证据落到 `out/<sessionId>/`。训练平台与 DeepSeek 是仅有的两个外部系统；`tag` 与白名单、提交语义、安全默认见上图卡片与下文。
 
+模块级视图（入口层 / 配置与编排 / 适配层 / 产物 / 外部系统，每块都标了对应源码文件）：
+
+![TrainSolve 模块级架构](docs/architecture-detailed.png)
+
 ## 快速开始
 
 ### 1. 下载发布包
