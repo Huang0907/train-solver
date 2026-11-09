@@ -1,0 +1,3 @@
+{
+  "3373": "#include <stdio.h>\n\nint main(void)\n{\n    int year;\n    int days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};\n\n    printf(\"Please enter the year:\");\n    if (scanf(\"%d\", &year) != 1) {\n        return 1;\n    }\n\n    if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) {\n        days[1] = 29;\n    }\n\n    for (int block = 0; block < 2; block++) {\n        for (int month = 0; month < 6; month++) {\n            if (month > 0) {\n                printf(\",\");\n            }\n            printf(\"%d\", days[block * 6 + month]);\n        }\n        printf(\"\\n\");\n    }\n    return 0;\n}\n"
+}

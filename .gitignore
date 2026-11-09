@@ -1,0 +1,27 @@
+# 本地私密配置（含账号/Key），不要提交
+# config.toml* 而不是 config.toml：备份文件 config.toml.bak-<时间戳> 同样是明文凭据，
+# 只写原名会让 `git init` 之后这些备份直接进历史。
+config.toml*
+trainsolve.toml
+.env
+
+# 运行产物
+out/
+
+# 打包中间文件
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# 打包产物（2026-11-08 建仓时追加）：release/ 与 dist/ 都能由 build_release.ps1 重建，
+# 入库会让每次打包新增约 51 MB，仓库很快不可用。发布件留在磁盘，不进版本历史。
+release/
+dist/
+*.exe
+*.zip
+*.log

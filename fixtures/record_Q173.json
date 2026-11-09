@@ -1,0 +1,54 @@
+{
+  "code": 0,
+  "startTime": "2026-10-22T16:33:22.519263706",
+  "lastTime": "",
+  "state": 0,
+  "timeLeft": 5004,
+  "totalTime": 5004,
+  "usedTime": 0,
+  "paper": {
+    "questions": [
+      {
+        "id": 173,
+        "content": "不用标准库函数strcmp，自己编写一个函数MyStrcmp\n实现将两个字符串s和t进行比较，即将s和t中对应的字符依次相比较，如有某一对字符不相等，则返回两个字符的差值，如果一直相等，则到字符串末尾结束循环，返回0（表示字符串相等）。\n要求如下：\n(1)函数MyStrcmp函数原型为：\n     int MyStrcmp(char s[],char t[])\n(2)在主函数中\n     从键盘分别输入两个字符串s和t，\n     (每个字符串的最大长度为80个字符) \n     然后调用MyStrcmp函数，\n     接下来，判定该函数的返回值：\n     如果大于0，输出\"string s>string t.\\n\"\n     如果小于0，输出\"string s\\<string t.\\n\"\n     如果等于0，输出\"string s=string t.\\n\"\n(3)**用gets输入字符串。\n   **输入提示信息：\n   输入s之前提示：\"Input s\\n\"\n   输入t之前提示：\"Input t\\n\"\n程序运行示例：\nInput s\nhello\nInput t\nworld\nstring s\\<string t.",
+        "contentEn": "Do not use the standard library function `strcmp`, write your own function `MyStrcmp`.\nThis function implements comparison of two strings `s` and `t`: compare corresponding characters of `s` and `t` one by one. If any pair of characters is not equal, return the difference between the two characters. If all compared characters are equal, the loop ends when reaching the end of the string, and return 0 (indicating the two strings are equal).\n\nRequirements:\n(1) The prototype of function `MyStrcmp` is:\n     int MyStrcmp(char s[],char t[])\n(2) In the main function:\n     Input two strings `s` and `t` respectively from the keyboard,\n     (the maximum length of each string is 80 characters)\n     then call the `MyStrcmp` function,\n     next, judge the return value of the function:\n     If it is greater than 0, output `\"string s>string t.\\n\"`\n     If it is less than 0, output `\"string s<string t.\\n\"`\n     If it is equal to 0, output `\"string s=string t.\\n\"`\n(3)** Use `gets` to input strings.\n   ** Input prompt information:\n   Before inputting `s`, prompt: `\"Input s\\n\"`\n   Before inputting `t`, prompt: `\"Input t\\n\"`\n\nSample program run:\nInput s\nhello\nInput t\nworld\nstring s\\<string t.",
+        "point": 10.0,
+        "qType": 5,
+        "richFormat": false,
+        "language": 1,
+        "globalId": "82249bbbc32848278edee91df2dfe1f9",
+        "options": []
+      }
+    ]
+  },
+  "answerPaper": {
+    "q0": [],
+    "q1": [],
+    "q2": [],
+    "q3": [],
+    "q4": [
+      {
+        "answer": "#include <stdio.h>\n\nint main()\n{\n\n\treturn 0;\n}",
+        "keySequence": [],
+        "inputSequence": [],
+        "globalId": "82249bbbc32848278edee91df2dfe1f9",
+        "qType": 5
+      }
+    ],
+    "q5": []
+  },
+  "examName": "",
+  "studentCode": "",
+  "studentName": "",
+  "buyCode": false,
+  "score": 0.0,
+  "canViewCode": true,
+  "fullScore": 12.0,
+  "timeline": [
+    {
+      "createTime": "2026-10-22T16:33:22.519263706",
+      "actionCode": 0,
+      "actionData": ""
+    }
+  ]
+}

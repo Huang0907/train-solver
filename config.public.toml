@@ -1,0 +1,71 @@
+# TrainSolve 公开版配置模板（不含任何账号 / 密钥）
+# 第一次运行客户端后，点右上「设置」或「更换模型…」把下面几项填上，程序会自动保存。
+# 不需要手动改这个文件——把它当说明看即可。
+
+[platform]
+# 你所在的训练平台地址
+base_url = "http://172.22.181.82/train/"
+# 你的学号 / 密码（只保存在本机）
+username = ""
+password = ""
+timeout = 25
+
+[deepseek]
+# 模型服务的 API Key（OpenAI 兼容）
+# 官方：https://platform.deepseek.com 申请，sk- 开头
+# 本地网关：按你自己的网关配置来
+api_key = ""
+base_url = "https://api.deepseek.com"
+model = "deepseek-flash"
+temperature = 0.2
+max_tokens = 16000
+timeout = 180
+retries = 3
+preferred = 0
+
+[run]
+qbase_type = 4
+level = 2
+tag_id = -1
+count = 1
+judge = "local"
+max_repairs = 3
+gcc = ""
+out_dir = "out"
+# 安全默认：第一次只试运行，不真提交。确认题目和答案都对，再到「设置」里打开真提交
+# （submit = true 且 dry_run = false）。每次提交都会消耗你平台上有限的提交机会。
+submit = false
+confirm = true
+dry_run = true
+solver = "auto"
+score_timeout = 600
+sleep_between = 3
+stop_on_failure = true
+# 自检明确未通过（编译不过 / 样例输出对不上）的答案默认不提交
+allow_unverified_submit = false
+# 更严格：连「样例没还原出来、无法逐字节比对」的题也不提交
+require_verified = false
+qtypes = [5, 6, 7]
+# 未满分时自动重答（0.5.5 起默认 false）：重答会撤销刚才的提交、清空成绩，要开自己改 true
+auto_fix_from_judge = false
+max_reanswers = 5
+max_consecutive_failures = 3
+max_consecutive_skips = 5
+max_consecutive_infra_errors = 2
+cleanup_abandoned = true
+# 启动时自动清理残留：过期（剩余时间 <= 0）的「未完成」会话 + %TEMP% 里超龄的 _MEI* 目录
+auto_cleanup = true
+auto_cleanup_all = false        # true = 连未过期的「未完成」也清（会删正在做的题）
+auto_cleanup_temp_hours = 2
+
+# ---- 模拟人类打字（GUI 勾选「模拟真人打字提交」或 CLI --human / --human-dry-run）----
+# 用浏览器逐字符打字 + 真实点提交；核心流程（取题/解题/自检/评分）不受影响。
+# 桌面版 exe 已内置 Playwright；源码运行需 pip install -r requirements-human.txt
+human_input = false
+human_dry_run = false
+cdp_url = "http://127.0.0.1:9333"    # 本机 Chrome 的调试端口（没开会自动拉起）
+# 每次作答的基准速度在区间内随机（行内还有漂移）；两个都写 0 = 按 typing_cpm ±25% 随机
+typing_cpm = 220                     # 基准速度（字符/分钟），想快可以改 400
+typing_cpm_min = 0                   # 随机下限（0 = 自动）
+typing_cpm_max = 0                   # 随机上限（0 = 自动）
+typo_rate = 0.02                     # 打错概率（打错后自动退格重打）

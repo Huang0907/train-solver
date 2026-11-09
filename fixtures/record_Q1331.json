@@ -1,0 +1,54 @@
+{
+  "code": 0,
+  "startTime": "2026-10-22T18:05:39",
+  "lastTime": "",
+  "state": 0,
+  "timeLeft": 4367,
+  "totalTime": 4532,
+  "usedTime": 0,
+  "paper": {
+    "questions": [
+      {
+        "id": 1331,
+        "content": "将一个链表按逆序排列，即将链头当链尾，链尾当链头。\n**输入提示：\"\\nPlease enter the linked list (non-number indicates end)\\n\"\n**输入提示：\"Node value:\"\n**输出提示：\"\\nOriginal list:\\n\"\n**输出格式：\"%4d\"\n**输出提示：\"\\n\\nReversed list:\\n\"\n**输出格式：\"%4d\"\n\n程序的运行示例如下：\nPlease enter the linked list (non-number indicates end)\nNode value:3\nNode value:4\nNode value:5\nNode value:6\nNode value:7\nNode value:end\nOriginal list:\n   3   4   5   6   7\n\nReversed list:\n   7   6   5   4   3",
+        "contentEn": "Reverse a linked list so that the head becomes the tail and the tail becomes the head.  \n**Input prompt:** \"\\nPlease enter the linked list (non-number indicates end)\\n\"  \n**Input prompt:** \"Node value:\"  \n**Output prompt:** \"\\nOriginal list:\\n\"  \n**Output format:** \"%4d\"  \n**Output prompt:** \"\\n\\nReversed list:\\n\"  \n**Output format:** \"%4d\"  \n\nExample run of the program:  \nPlease enter the linked list (non-number indicates end)  \nNode value:3  \nNode value:4  \nNode value:5  \nNode value:6  \nNode value:7  \nNode value:end  \nOriginal list:  \n   3   4   5   6   7  \n\nReversed list:  \n   7   6   5   4   3",
+        "point": 10.0,
+        "qType": 7,
+        "richFormat": false,
+        "language": 1,
+        "globalId": "fa39e5091baa4458b082e5c9de1ebc50",
+        "options": []
+      }
+    ]
+  },
+  "answerPaper": {
+    "q0": [],
+    "q1": [],
+    "q2": [],
+    "q3": [],
+    "q4": [
+      {
+        "answer": "#include <stdio.h>\n\nint main()\n{\n\n\treturn 0;\n}",
+        "keySequence": [],
+        "inputSequence": [],
+        "globalId": "fa39e5091baa4458b082e5c9de1ebc50",
+        "qType": 7
+      }
+    ],
+    "q5": []
+  },
+  "examName": "",
+  "studentCode": "",
+  "studentName": "",
+  "buyCode": false,
+  "score": 0.0,
+  "canViewCode": true,
+  "fullScore": 12.0,
+  "timeline": [
+    {
+      "createTime": "2026-10-22T18:05:39",
+      "actionCode": 0,
+      "actionData": ""
+    }
+  ]
+}

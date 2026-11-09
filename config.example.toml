@@ -1,0 +1,73 @@
+# 平台账号（不写也能用命令行 --user/--password 传）
+[platform]
+base_url = "http://172.22.181.82/train/"
+username = ""
+password = ""
+timeout = 25
+
+# 默认模型：DeepSeek 官方的 V4.1-Flash。官方 API 里它的 id 就叫 deepseek-flash
+# （官方只接受 deepseek-flash / deepseek-v4-pro 两个名字，写 deepseek-v4.1-flash 会被 400 拒绝）
+# 用本地网关就把 base_url 换成你的网关地址（例如 http://127.0.0.1:7864/v1）、
+# 模型名换成网关的 id（例如 cn:deepseek-v4.1-flash）
+[deepseek]
+api_key = ""
+base_url = "https://api.deepseek.com"
+model = "deepseek-flash"
+temperature = 0.2
+# 推理型模型的思维链也计入 completion token；4096 会导致只输出思考、没有代码
+max_tokens = 16000
+timeout = 180
+retries = 3
+
+[run]
+# 题型：0单选 1多选 2判断 3填空 4编程
+qbase_type = 4
+# 难度：0随机 1初学者 2容易 3中等 4困难 5极难
+level = 2
+# 标签：-1 随机，其它为 list-tag 返回的 id
+tag_id = -1
+count = 1
+# 判题：local(本地 gcc) | server(平台 run-code) | both | none
+judge = "local"
+max_repairs = 3
+gcc = ""
+out_dir = "out"
+submit = true
+confirm = true
+dry_run = false
+solver = "auto"
+score_timeout = 600
+sleep_between = 3
+stop_on_failure = true
+# 自检明确未通过（编译不过 / 样例输出对不上）的答案默认不提交，改成 true 才强制提交
+allow_unverified_submit = false
+# 更严格：连「题面样例没还原出来、无法逐字节比对」的题也不提交
+require_verified = false
+# 题型白名单：5 普通编程 / 6 实验编程 / 7 复杂编程（默认只做这三种，排除改错题 8、9）
+# 只做普通编程题就写 [5]；传 [] 表示不限制（会包含改错题、程序填空题）
+qtypes = [5, 6, 7]
+# 提交后若未满分：把平台的失败用例/编译错误回灌给模型，修好重答。
+# 0.5.5 起默认 false —— 平台的“重答”会撤销刚才的提交、清空成绩，要开自己改 true
+auto_fix_from_judge = false
+max_reanswers = 5
+# ---- 启动时自动清理残留 ----
+# 清掉平台上已过期（剩余时间 <= 0）的「未完成」会话，以及 %TEMP% 里超龄的 _MEI* 解压目录。
+# 正在时限内的会话一律不动；auto_cleanup_all = true 才连它们一起清（慎用）。
+auto_cleanup = true
+auto_cleanup_all = false
+auto_cleanup_temp_hours = 2
+# 全自动模式（--auto / count = 0）的熔断：连续未满分 / 连续跳过 多少题后停
+max_consecutive_failures = 3
+max_consecutive_skips = 5
+
+# ---- 模拟人类打字（GUI 勾选「模拟真人打字提交」或 CLI --human / --human-dry-run）----
+# 作答改成浏览器逐字符打字 + 真实点提交；取题/解题/自检/评分仍走 API。
+# 桌面版 exe 已内置 Playwright，无需另装；源码运行需 pip install -e .[human]
+human_input = false
+human_dry_run = false
+cdp_url = "http://127.0.0.1:9333"    # 本机 Chrome 的 CDP 端口；没开工具会自动拉起
+# 每次作答的基准速度在下面区间内随机（行内还有漂移）；两个都写 0 = 按 typing_cpm ±25% 随机
+typing_cpm = 220                     # 基准速度（字符/分钟），实测 400–600 也稳
+typing_cpm_min = 0                   # 随机下限（0 = 自动）
+typing_cpm_max = 0                   # 随机上限（0 = 自动）
+typo_rate = 0.02                     # 打错概率（打错自动退格重打）

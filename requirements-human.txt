@@ -1,0 +1,4 @@
+# 「模拟人类打字」模式（--human / --human-dry-run）的额外依赖
+# 核心功能（取题 / 解题 / 自检 / 提交 / 评分）零第三方依赖，不需要装这个。
+# 注意：不需要 `playwright install`，工具连的是你本机的 Chrome（CDP 端口 9333）。
+playwright>=1.40
