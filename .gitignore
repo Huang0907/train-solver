@@ -11,6 +11,9 @@ out/
 # 打包中间文件
 build/
 
+# Archify 图表工作区（候选 JSON 与交互版 HTML 很大，成品图另存 docs/）
+.archify/
+
 # Python
 __pycache__/
 *.py[cod]
