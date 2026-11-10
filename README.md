@@ -281,11 +281,13 @@ powershell -ExecutionPolicy Bypass -File build_release.ps1
 
 - 桌面版勾选「模拟真人打字提交」即可（driver 已内置）；
 - 源码运行需 `pip install playwright`，Chrome 用 `--remote-debugging-port=9333` 启动（没开会自动拉起独立 profile）；
-- 第一次建议 `--human-dry-run`（只打字、回读校验，不点提交）。
+- 第一次建议 `--human-dry-run`（只打字、回读校验，不点提交）；
+- 作答前可加一段**随机「思考时间」**：每题在 `--human-delay-min` ~ `--human-delay-max` 分钟区间内独立取一个值（0–60），期间按「停止」可立即中断且不提交。桌面版在设置 → 模拟人类输入里填同一对区间。
 
 ```powershell
 python -m trainsolve run --count 1 --human --cpm 220
 python -m trainsolve run --count 1 --human --cpm-min 180 --cpm-max 400
+python -m trainsolve run --count 2 --human --human-delay-min 3 --human-delay-max 12
 ```
 
 关键实现：每字符一条原生按键（`Input.dispatchKeyEvent`，Shift 符号单独按下）；逐行回读对齐缩进；回读与按键共用同一 CDP 会话且连续两次一致才采信；提交前必须等到 `post-answer` 的 **HTTP 2xx + 业务 code=0 回执**（只等请求体不够，平台组件状态在响应回调里才更新）。

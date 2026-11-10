@@ -232,6 +232,10 @@ class RunConfig:
     typing_cpm_min: float = 0.0        # 显式随机下限（0 = 按基准 ±25%）
     typing_cpm_max: float = 0.0        # 显式随机上限（0 = 按基准 ±25%）
     typo_rate: float = 0.02            # 打错概率
+    # 每题作答前的随机等待（分钟）：真正的「人」不会秒交卷。
+    # 每题独立在 [human_delay_min, human_delay_max] 内均匀取一个值；两个都 0 = 不等待。
+    human_delay_min: float = 0.0
+    human_delay_max: float = 0.0
 
 
 @dataclass
@@ -288,6 +292,7 @@ def load_config_with_source(
             "cleanup_abandoned", "auto_cleanup", "auto_cleanup_all", "auto_cleanup_temp_hours",
             "human_input", "human_dry_run", "cdp_url",
             "typing_cpm", "typing_cpm_min", "typing_cpm_max", "typo_rate",
+            "human_delay_min", "human_delay_max",
         })
         config.source = resolved.path
 

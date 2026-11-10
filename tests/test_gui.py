@@ -650,6 +650,27 @@ class SettingsDialogTest(unittest.TestCase):
             app.stop_event.set()
             app.destroy()
 
+    def test_human_delay_settings_are_saved(self):
+        """「每题随机思考」区间要能存进配置；写反自动交换。"""
+        app = gui.ClientApp()
+        app.withdraw()
+        try:
+            dialog = gui.SettingsDialog(app)
+            dialog.var_delay_min.set(10.0)
+            dialog.var_delay_max.set(3.0)
+            with mock.patch.object(gui, "save_client_config"):
+                dialog.on_save()
+            cfg = app.config_data
+            self.assertEqual(cfg.run.human_delay_min, 3.0)
+            self.assertEqual(cfg.run.human_delay_max, 10.0)
+
+            again = gui.SettingsDialog(app)
+            self.assertEqual(again.var_delay_min.get(), 3.0)
+            self.assertEqual(again.var_delay_max.get(), 10.0)
+        finally:
+            app.stop_event.set()
+            app.destroy()
+
 
 class ConfigPersistenceTest(unittest.TestCase):
     def test_roundtrip(self):

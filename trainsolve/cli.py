@@ -224,6 +224,10 @@ def _add_human_args(parser) -> None:
     parser.add_argument("--cpm-max", type=float, default=None,
                         help="每次作答随机速度的上限（默认 基准×1.25）")
     parser.add_argument("--typo-rate", type=float, default=None, help="打错概率（0~1），默认 0.02")
+    parser.add_argument("--human-delay-min", type=float, default=None,
+                        help="每题作答前随机等待的下限（分钟，0~60），默认 0")
+    parser.add_argument("--human-delay-max", type=float, default=None,
+                        help="每题作答前随机等待的上限（分钟，0~60）；两个都为 0 = 不等待")
     parser.add_argument("--cdp-url", default=None, help="浏览器调试端口，默认 http://127.0.0.1:9333")
 
 
@@ -278,6 +282,15 @@ def _apply_human(config: Config, args) -> None:
         config.run.typing_cpm_max = float(args.cpm_max)
     if getattr(args, "typo_rate", None) is not None:
         config.run.typo_rate = float(args.typo_rate)
+    for name in ("human_delay_min", "human_delay_max"):
+        value = getattr(args, name, None)
+        if value is not None:
+            setattr(config.run, name, max(0.0, min(60.0, float(value))))
+    if config.run.human_delay_min > config.run.human_delay_max:
+        config.run.human_delay_min, config.run.human_delay_max = (
+            config.run.human_delay_max,
+            config.run.human_delay_min,
+        )
     if getattr(args, "cdp_url", None):
         config.run.cdp_url = args.cdp_url
 

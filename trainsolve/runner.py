@@ -149,6 +149,20 @@ class Runner:
             remaining -= slice_
         return self.should_stop()
 
+    def _human_delay_seconds(self) -> float:
+        """每题作答前的随机等待秒数：在 [human_delay_min, human_delay_max] 分钟里均匀取。
+
+        两个都为 0（默认）时不等待；只填上限时下限按 0 处理；写反了自动交换。
+        """
+        run = self.config.run
+        low = max(0.0, min(60.0, float(run.human_delay_min or 0.0)))
+        high = max(0.0, min(60.0, float(run.human_delay_max or 0.0)))
+        if low > high:
+            low, high = high, low
+        if high <= 0:
+            return 0.0
+        return random.uniform(low * 60.0, high * 60.0)
+
     def _pick_session(self) -> str:
         run = self.config.run
         if run.tag_id is not None and run.tag_id >= 0:
@@ -638,6 +652,18 @@ class Runner:
         used_human = False
         if self.human is not None and outcome.questions and outcome.questions[0].kind == "programming":
             code = outcome.questions[0].code_or_answer
+            delay = self._human_delay_seconds()
+            if delay > 0:
+                self.log(
+                    f"  ⏳ 模拟思考：本题随机等待 {delay / 60:.1f} 分钟"
+                    f"（区间 {run_config.human_delay_min:g}–{run_config.human_delay_max:g} 分钟）"
+                )
+                if self._sleep_unless_stopped(delay):
+                    outcome.detail = "已停止（模拟思考等待中被中断，未作答）"
+                    self.log("  ⏹ 随机等待期间收到停止，本题不提交")
+                    if run_config.cleanup_abandoned:
+                        self._abandon_session(session_id, reason="停止：模拟思考等待中未作答")
+                    return outcome
             self.log("  🧑‍💻 浏览器作答：逐字符输入（模拟真人）+ 真实点击提交")
             try:
                 result = self.human.answer(session_id, code, dry_run=run_config.human_dry_run)

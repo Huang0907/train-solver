@@ -331,6 +331,83 @@ class AutoLoopTest(unittest.TestCase):
         self.assertEqual(len(outcomes), 3)
 
 
+class HumanDelayTest(unittest.TestCase):
+    """模拟思考时间：每题在区间内随机等待，可被「停止」中断。"""
+
+    def _runner(self, **overrides):
+        config = make_config(tempfile.mkdtemp())
+        config.run.sleep_between = 0
+        for key, value in overrides.items():
+            setattr(config.run, key, value)
+        return Runner(FakeClient(live_record()), StubSolver(ANSWERS), config, log=lambda *_: None)
+
+    def test_default_is_no_wait(self):
+        self.assertEqual(self._runner()._human_delay_seconds(), 0.0)
+
+    def test_random_stays_inside_range(self):
+        runner = self._runner(human_delay_min=3, human_delay_max=12)
+        samples = [runner._human_delay_seconds() for _ in range(50)]
+        self.assertTrue(all(180.0 <= s <= 720.0 for s in samples), samples[:5])
+        self.assertGreater(max(samples) - min(samples), 60, "应当随机而不是固定值")
+
+    def test_only_upper_bound_means_zero_lower(self):
+        runner = self._runner(human_delay_max=5)
+        samples = [runner._human_delay_seconds() for _ in range(30)]
+        self.assertTrue(all(0.0 <= s <= 300.0 for s in samples), samples[:5])
+
+    def test_reversed_range_is_swapped(self):
+        runner = self._runner(human_delay_min=10, human_delay_max=2)
+        samples = [runner._human_delay_seconds() for _ in range(30)]
+        self.assertTrue(all(120.0 <= s <= 600.0 for s in samples), samples[:5])
+
+    def test_values_are_clamped_to_sixty_minutes(self):
+        runner = self._runner(human_delay_min=100, human_delay_max=200)
+        self.assertEqual(runner._human_delay_seconds(), 3600.0)
+
+    def _human_runner(self, typed, slept, stop=False):
+        from trainsolve.human import HumanResult
+
+        class FakeHuman:
+            def answer(self, session_id, code, dry_run=False):
+                typed.append(session_id)
+                return HumanResult(ok=True, message="已输入并提交")
+
+        config = make_config(tempfile.mkdtemp())
+        config.run.sleep_between = 0
+        config.run.score_timeout = 0.5
+        config.run.human_input = True
+        config.run.human_delay_min = 2
+        config.run.human_delay_max = 2
+        config.run.cleanup_abandoned = False
+        client = FakeClient(live_record())
+        runner = Runner(client, StubSolver(ANSWERS), config,
+                        log=lambda *_: None, human=FakeHuman())
+
+        def fake_sleep(seconds):
+            slept.append(seconds)
+            return stop
+
+        runner._sleep_unless_stopped = fake_sleep
+        return runner, client
+
+    def test_waits_before_typing(self):
+        typed, slept = [], []
+        runner, client = self._human_runner(typed, slept)
+        runner.run_once(1, 1)
+        self.assertEqual(slept, [120.0], "每题等待应当恰好来自区间（2–2 分钟）")
+        self.assertEqual(len(typed), 1, "等待之后才开始打字")
+        self.assertEqual(client.submitted, 0, "真人模式下提交由浏览器完成，不走 API submit")
+
+    def test_stop_during_wait_aborts_without_typing(self):
+        typed, slept = [], []
+        runner, client = self._human_runner(typed, slept, stop=True)
+        outcome = runner.run_once(1, 1)
+        self.assertEqual(slept, [120.0])
+        self.assertEqual(typed, [], "等待中停止就不该再键入")
+        self.assertEqual(client.submitted, 0)
+        self.assertIn("已停止", outcome.detail)
+
+
 class ExplodingSolver:
     """模拟网关 503：解题直接抛 SolverError。"""
 

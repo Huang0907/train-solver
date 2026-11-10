@@ -208,6 +208,8 @@ typing_cpm = {config.run.typing_cpm}
 typing_cpm_min = {config.run.typing_cpm_min}
 typing_cpm_max = {config.run.typing_cpm_max}
 typo_rate = {config.run.typo_rate}
+human_delay_min = {config.run.human_delay_min}
+human_delay_max = {config.run.human_delay_max}
 """
     path.write_text(text, encoding="utf-8")
     if log is not None:
@@ -1420,6 +1422,19 @@ class SettingsDialog(tk.Toplevel):
                         variable=self.var_human_dry).grid(
             row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 6))
 
+        delay_row = ttk.Frame(human_frame)
+        delay_row.grid(row=5, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
+        ttk.Label(delay_row, text="每题随机思考").pack(side="left")
+        self.var_delay_min = tk.DoubleVar(value=cfg.run.human_delay_min)
+        ttk.Spinbox(delay_row, from_=0, to=60, increment=1,
+                    textvariable=self.var_delay_min, width=6).pack(side="left", padx=4)
+        ttk.Label(delay_row, text="–").pack(side="left")
+        self.var_delay_max = tk.DoubleVar(value=cfg.run.human_delay_max)
+        ttk.Spinbox(delay_row, from_=0, to=60, increment=1,
+                    textvariable=self.var_delay_max, width=6).pack(side="left", padx=4)
+        ttk.Label(delay_row, text="分钟（0 = 不等待；每题在区间内随机，可被「停止」打断）",
+                  foreground="#777").pack(side="left", padx=(6, 0))
+
         ttk.Label(frame, text="题目类型过滤").grid(row=9, column=0, sticky="w", pady=4)
         preset = next(
             (name for name, values in QTYPE_PRESETS if list(cfg.run.qtypes) == values),
@@ -1510,6 +1525,12 @@ class SettingsDialog(tk.Toplevel):
         cfg.run.typing_cpm_min = cpm_min
         cfg.run.typing_cpm_max = cpm_max
         cfg.run.typo_rate = min(0.3, max(0.0, float(self.var_typo.get() or 0)))
+        delay_min = min(60.0, max(0.0, float(self.var_delay_min.get() or 0)))
+        delay_max = min(60.0, max(0.0, float(self.var_delay_max.get() or 0)))
+        if delay_min > delay_max:
+            delay_min, delay_max = delay_max, delay_min
+        cfg.run.human_delay_min = delay_min
+        cfg.run.human_delay_max = delay_max
         cfg.run.cdp_url = self.var_cdp.get().strip() or cfg.run.cdp_url
         cfg.run.auto_cleanup = bool(self.var_auto_clean.get())
         cfg.run.auto_cleanup_all = bool(self.var_auto_clean_all.get())
