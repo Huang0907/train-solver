@@ -627,6 +627,29 @@ class SettingsDialogTest(unittest.TestCase):
             app.stop_event.set()
             app.destroy()
 
+    def test_keep_going_settings_are_saved(self):
+        """「遇到未满分也继续」勾选 = stop_on_failure 关，两个方向都要能存。"""
+        app = gui.ClientApp()
+        app.withdraw()
+        try:
+            app.config_data.run.stop_on_failure = True
+            dialog = gui.SettingsDialog(app)
+            self.assertFalse(dialog.var_keepgoing.get(), "默认不勾选")
+            dialog.var_keepgoing.set(True)
+            with mock.patch.object(gui, "save_client_config"):
+                dialog.on_save()
+            self.assertFalse(app.config_data.run.stop_on_failure)
+
+            again = gui.SettingsDialog(app)
+            self.assertTrue(again.var_keepgoing.get(), "回读要反映已保存的值")
+            again.var_keepgoing.set(False)
+            with mock.patch.object(gui, "save_client_config"):
+                again.on_save()
+            self.assertTrue(app.config_data.run.stop_on_failure)
+        finally:
+            app.stop_event.set()
+            app.destroy()
+
 
 class ConfigPersistenceTest(unittest.TestCase):
     def test_roundtrip(self):

@@ -1350,8 +1350,15 @@ class SettingsDialog(tk.Toplevel):
             variable=self.var_allow_unverified,
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=2)
 
+        self.var_keepgoing = tk.BooleanVar(value=not cfg.run.stop_on_failure)
+        ttk.Checkbutton(
+            frame,
+            text="遇到未满分也继续（--keep-going；关掉则做完当前题就停）",
+            variable=self.var_keepgoing,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=2)
+
         clean_frame = ttk.LabelFrame(frame, text="启动时自动清理残留")
-        clean_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        clean_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 4))
 
         self.var_auto_clean = tk.BooleanVar(value=cfg.run.auto_cleanup)
         ttk.Checkbutton(clean_frame, text="清理过期的「未完成」会话（不动正在做的题）",
@@ -1372,7 +1379,7 @@ class SettingsDialog(tk.Toplevel):
         ttk.Label(temp_row, text="小时才删（%TEMP% 里的 _MEI* 解压残留）").pack(side="left")
 
         human_frame = ttk.LabelFrame(frame, text="模拟人类输入（浏览器逐字符打字）")
-        human_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(4, 4))
+        human_frame.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(4, 4))
 
         self.var_human = tk.BooleanVar(value=cfg.run.human_input)
         ttk.Checkbutton(human_frame, text="开启（也可在主界面左侧勾选）",
@@ -1413,34 +1420,34 @@ class SettingsDialog(tk.Toplevel):
                         variable=self.var_human_dry).grid(
             row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 6))
 
-        ttk.Label(frame, text="题目类型过滤").grid(row=8, column=0, sticky="w", pady=4)
+        ttk.Label(frame, text="题目类型过滤").grid(row=9, column=0, sticky="w", pady=4)
         preset = next(
             (name for name, values in QTYPE_PRESETS if list(cfg.run.qtypes) == values),
             QTYPE_PRESETS[-1][0],
         )
         self.var_qtypes = tk.StringVar(value=preset)
         ttk.Combobox(frame, textvariable=self.var_qtypes, values=[n for n, _ in QTYPE_PRESETS],
-                     state="readonly", width=30).grid(row=8, column=1, sticky="w", pady=4)
+                     state="readonly", width=30).grid(row=9, column=1, sticky="w", pady=4)
 
-        ttk.Label(frame, text="产物目录").grid(row=9, column=0, sticky="w", pady=4)
+        ttk.Label(frame, text="产物目录").grid(row=10, column=0, sticky="w", pady=4)
         self.var_out = tk.StringVar(value=cfg.run.out_dir)
-        ttk.Entry(frame, textvariable=self.var_out, width=46).grid(row=9, column=1, pady=4)
+        ttk.Entry(frame, textvariable=self.var_out, width=46).grid(row=10, column=1, pady=4)
 
-        ttk.Label(frame, text="gcc 路径（留空自动找）").grid(row=10, column=0, sticky="w", pady=4)
+        ttk.Label(frame, text="gcc 路径（留空自动找）").grid(row=11, column=0, sticky="w", pady=4)
         self.var_gcc = tk.StringVar(value=cfg.run.gcc)
-        ttk.Entry(frame, textvariable=self.var_gcc, width=46).grid(row=10, column=1, pady=4)
+        ttk.Entry(frame, textvariable=self.var_gcc, width=46).grid(row=11, column=1, pady=4)
 
         ttk.Label(frame, text=f"配置将保存到：{settings_path()}", foreground="#555",
-                  wraplength=420).grid(row=11, column=0, columnspan=2, pady=(8, 4), sticky="w")
+                  wraplength=420).grid(row=12, column=0, columnspan=2, pady=(8, 4), sticky="w")
 
         test_row = ttk.Frame(frame)
-        test_row.grid(row=12, column=0, columnspan=2, pady=(4, 0), sticky="w")
+        test_row.grid(row=13, column=0, columnspan=2, pady=(4, 0), sticky="w")
         ttk.Button(test_row, text="测试连接", command=self.on_test).pack(side="left")
         self.lbl_test = ttk.Label(test_row, text="", foreground="#555", wraplength=330)
         self.lbl_test.pack(side="left", padx=10)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=13, column=0, columnspan=2, pady=(10, 0), sticky="e")
+        buttons.grid(row=14, column=0, columnspan=2, pady=(10, 0), sticky="e")
         ttk.Button(buttons, text="保存", command=self.on_save).pack(side="left", padx=6)
         ttk.Button(buttons, text="取消", command=self.destroy).pack(side="left")
 
@@ -1492,6 +1499,7 @@ class SettingsDialog(tk.Toplevel):
         cfg.run.out_dir = self.var_out.get().strip() or "out"
         cfg.run.gcc = self.var_gcc.get().strip()
         cfg.run.allow_unverified_submit = bool(self.var_allow_unverified.get())
+        cfg.run.stop_on_failure = not bool(self.var_keepgoing.get())
         cfg.run.human_input = bool(self.var_human.get())
         cfg.run.human_dry_run = bool(self.var_human_dry.get())
         cfg.run.typing_cpm = min(800.0, max(60.0, float(self.var_cpm.get() or 220)))

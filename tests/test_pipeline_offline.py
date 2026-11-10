@@ -305,6 +305,31 @@ class AutoLoopTest(unittest.TestCase):
         outcomes = runner.run()
         self.assertEqual(len(outcomes), 2)
 
+    def test_dry_run_fixed_count_is_not_treated_as_failure(self):
+        # dry-run 不提交，会话必然留在「未完成」；旧逻辑按 stop_on_failure 判失败，
+        # 填了数量也只做第 1 题。现在应把数量跑满。
+        runner = self._runner([bad_outcome() for _ in range(5)], count=3, dry_run=True)
+        outcomes = runner.run()
+        self.assertEqual(len(outcomes), 3)
+        self.assertEqual(runner.calls, 3)
+
+    def test_dry_run_auto_loop_still_stops_on_consecutive_failures(self):
+        # 全自动没有目标题数，熔断仍要生效，否则会无限抽题。
+        runner = self._runner(
+            [bad_outcome() for _ in range(10)], count=0, dry_run=True,
+            max_consecutive_failures=3,
+        )
+        outcomes = runner.run()
+        self.assertEqual(len(outcomes), 3)
+        self.assertEqual(runner.calls, 3)
+
+    def test_fixed_count_keep_going_runs_past_failure(self):
+        runner = self._runner(
+            [bad_outcome(), ok_outcome(), ok_outcome()], count=3, stop_on_failure=False
+        )
+        outcomes = runner.run()
+        self.assertEqual(len(outcomes), 3)
+
 
 class ExplodingSolver:
     """模拟网关 503：解题直接抛 SolverError。"""

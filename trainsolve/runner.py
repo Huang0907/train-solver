@@ -848,6 +848,7 @@ class Runner:
         skips = 0
         infra_errors = 0
         attempts = 0
+        dry_noted = False
         max_attempts = 10_000 if auto else max(10, run_config.count * 8)
 
         if not self._preflight_model():
@@ -918,6 +919,12 @@ class Runner:
 
             if outcome.ok:
                 failures = 0
+            elif run_config.dry_run and target is not None:
+                # dry-run 不调用 submit，会话必然停在「未完成」。这不是答错，
+                # 不能拿它触发 stop_on_failure，否则填了数量也只会做第 1 题。
+                if not dry_noted:
+                    dry_noted = True
+                    self.log("（dry-run 未提交、会话留「未完成」，不计为失败；按数量继续跑满）")
             else:
                 failures += 1
                 if target is not None and run_config.stop_on_failure:
