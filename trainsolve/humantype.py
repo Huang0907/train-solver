@@ -292,15 +292,59 @@ class HumanTyper:
         self.sleep(self.timing.char_delay())
         return self.timing.burst()
 
-    def _type_body(self, text: str, *, allow_typos: bool = False) -> None:
-        """逐字符打一段内容（不含换行），保留抖动 / 连打 / 偶发打错再退格。
+    def _current_line(self, *, settle: bool = False) -> str:
+        """读当前（光标所在，也就是正在打的）那一行。"""
+        if settle:
+            return self._settle().split("\n")[-1]
+        doc = self.io.read_doc()
+        if doc is None:
+            return ""
+        return doc.replace(NBSP, " ").split("\n")[-1]
 
-        另有「随机退格」：按概率删掉刚打的 1..N 个字符再原样补回，
-        内容不变，只是多几次真实按键与回读前的停顿，像人回头改一下。
+    def _type_body(self, text: str, *, allow_typos: bool = False) -> None:
+        """逐字符打一段内容（不含换行），**每敲一个字符前先读文档、按真实内容决定下一个键**。
+
+        0.6.8 起不再「整行盲打、打完再修」：每次按键前先看这一行现在是什么样，
+        于是丢键、编辑器自动补全/自动缩进、多插的字符都在**下一次按键之前**被吸收，
+        不会出现「一行打错、回头整行修」。同时保留抖动 / 连打 / 偶发打错再退格 /
+        随机退格，内容最终一定等于目标。
         """
+        want = text.rstrip(" ")
         burst_left = 0
-        typed = 0
-        for ch in text:
+        typed = 0            # 本行已经发出去的字符数（用来发现「键没落到文档里」）
+        steps = 0
+        limit = max(60, len(text) * 3 + 40)   # 上限只是防读值异常死循环
+        while steps < limit:
+            steps += 1
+            if self.should_stop():
+                raise TypingStopped()
+            line = self._current_line()
+            got = line[self._leading_spaces(line):]
+            if got.rstrip(" ") == want:
+                return
+            # 不一致时做一次稳定回读：CDP 求值可能读到「按键还没生效」的旧值，
+            # 按旧值补打就会重复输入。
+            line = self._current_line(settle=True)
+            got = line[self._leading_spaces(line):]
+            if got.rstrip(" ") == want:
+                return
+            if typed > len(got):
+                # 发出去的键比文档里多出来的少 → 有键丢了，补打属于修复
+                self.line_repairs += 1
+            typed = len(got)
+            common = 0
+            for a, b in zip(got, want):
+                if a != b:
+                    break
+                common += 1
+            if len(got) > common:
+                # 多了字符（自动补全/多插）→ 退格删掉
+                burst_left = self._pause_char(burst_left)
+                self.io.press("Backspace")
+                typed = max(0, typed - 1)
+                continue
+            # 少了字符（丢键 / 还没打）→ 补下一个
+            ch = want[len(got)]
             burst_left = self._pause_char(burst_left)
             if allow_typos and self.timing.should_typo():
                 self.io.type_char(self.timing.typo_char())
@@ -308,14 +352,20 @@ class HumanTyper:
                 self.io.press("Backspace")
             self.io.type_char(ch)
             typed += 1
-            if allow_typos and typed >= 2 and self.timing.should_backspace():
-                count = min(self.timing.backspace_count(), typed)
+            if allow_typos and len(got) >= 1 and self.timing.should_backspace():
+                # 随机退格：删掉刚打的 1..N 个字符（含刚敲的这个），**原样补回**——
+                # 只制造真实按键，不能真把进度删掉（否则自适应循环会一直打同一行）。
+                done = len(got) + 1
+                count = min(self.timing.backspace_count(), done)
+                start = done - count
                 for _ in range(count):
                     self.io.press("Backspace")
                     self.sleep(self.timing.char_delay())
-                for fix_ch in text[typed - count:typed]:
+                for fix_ch in want[start:done]:
                     self.io.type_char(fix_ch)
                     self.sleep(self.timing.char_delay())
+                typed = done
+        self.log(f"    ⚠ 行内自适应输入没收敛：{want[:40]!r}")
 
     # -------------------------------------------------------- 自动缩进 / 行内校正
 
@@ -373,40 +423,6 @@ class HumanTyper:
             fixed = True
         self.indent_fixes += 1
 
-    def _repair_line(self, want: str, *, max_steps: int = 90) -> bool:
-        """回读当前行，和目的一行不一致就逐字符退格/补打，直到一致。
-
-        每次只动一个字符并重新回读，因此对「丢键」「多插入字符」都收敛；
-        限制步数，避免读值异常时死循环。
-        """
-        want_cmp = want.rstrip(" ")
-        step = 0
-        fixed = False
-        while step < max_steps:
-            if self.should_stop():
-                raise TypingStopped()
-            got = self._settle().split("\n")[-1]
-            if got.rstrip(" ") == want_cmp:
-                if fixed:
-                    self.line_repairs += 1
-                return True
-            common = 0
-            for a, b in zip(got, want):
-                if a != b:
-                    break
-                common += 1
-            if len(got) > common:
-                self.io.press("Backspace")
-            elif len(got) < len(want):
-                self.io.type_char(want[len(got)])
-            else:  # 长度相同但内容不同：退一格再补
-                self.io.press("Backspace")
-            fixed = True
-            step += 1
-            self.sleep(0.012)
-        self.line_repairs += 1
-        return self._last_line().rstrip(" ") == want_cmp
-
     def _newline(self, expected_newlines: int) -> None:
         """按回车开新行；没开成（丢键）就再按，最多 3 次。"""
         for _ in range(3):
@@ -440,7 +456,6 @@ class HumanTyper:
                     ensure()
             self._align_indent(want_indent)
             self._type_body(line[want_indent:], allow_typos=allow_typos)
-            self._repair_line(line)
             if (index + 1) % 10 == 0:
                 self.log(f"    已输入 {index + 1}/{len(lines)} 行")
 

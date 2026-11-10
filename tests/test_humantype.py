@@ -414,6 +414,79 @@ class NonAsciiTypingTest(unittest.TestCase):
         self.assertEqual(letter[0]["modifiers"], 8, "大写字母必须按着 Shift")
 
 
+class AdaptiveTypingTest(unittest.TestCase):
+    """0.6.8 起：每敲一个字符前先读当前行，按真实内容决定补打还是退格。"""
+
+    def test_每敲一个字符前都先读一次文档(self):
+        class ReadingIO(FakeIO):
+            def read_doc(self):
+                self.events.append(("read", ""))
+                return self.doc
+
+        io = ReadingIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        typer.type_and_verify(CODE, rounds=1)
+
+        pending = False
+        for kind, _ in io.events:
+            if kind == "read":
+                pending = True
+            elif kind == "char":
+                self.assertTrue(pending, "每个字符输入前都必须先读文档")
+                pending = False
+
+    def test_多余字符会被退格删掉(self):
+        """编辑器自动补全多插了一个 } ：下一次按键前就该发现并删掉。"""
+
+        class AutoCloseIO(FakeIO):
+            def type_char(self, ch):
+                super().type_char(ch)
+                if ch == "{":
+                    super().type_char("}")   # 自动补全：多插一个右括号
+
+        io = AutoCloseIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        ok = typer.type_and_verify(CODE, rounds=1)
+        self.assertTrue(ok)
+        self.assertEqual(normalize_code(io.doc), normalize_code(CODE))
+        self.assertGreater(io.backspaces(), 0, "多插的字符必须被删掉")
+
+    def test_读到旧值不会重复输入(self):
+        """CDP 求值可能读到「按键还没生效」的旧值：不能照着旧值再打一遍。"""
+
+        class LaggingIO(FakeIO):
+            def __init__(self):
+                super().__init__()
+                self._dirty = False
+                self._stale = ""
+
+            def type_char(self, ch):
+                self._stale = self.doc
+                super().type_char(ch)
+                self._dirty = True
+
+            def read_doc(self):
+                if self._dirty:
+                    self._dirty = False
+                    return self._stale    # 第一次读返回按键前的旧值
+                return self.doc
+
+        io = LaggingIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        ok = typer.type_and_verify(CODE, rounds=1)
+        self.assertTrue(ok)
+        self.assertEqual(normalize_code(io.doc), normalize_code(CODE), "旧值不能导致重复字符")
+
+    def test_已经打对的行不会再敲(self):
+        io = FakeIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        typer._type_body("int x;", allow_typos=False)
+        before = len(io.events)
+        typer._type_body("int x;", allow_typos=False)
+        self.assertEqual(len(io.events), before, "内容已经对上就不该再按键")
+        self.assertEqual(io.doc, "int x;")
+
+
 class HumanTyperTest(unittest.TestCase):
     def test_types_whole_document(self):
         io = FakeIO()
