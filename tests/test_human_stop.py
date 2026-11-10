@@ -80,6 +80,25 @@ class SubmitGateTest(unittest.TestCase):
         self.assertIn("dry-run", result.message)
         self.assertEqual(calls, [])
 
+    def test_dry_run下同步窗口点停止也要如实抛停(self):
+        """dry-run 不提交，但停止语义必须传出去（0.6.8）。
+
+        否则主循环拿到的是一道「成功」的题：done+1、还会打假的「遇错即停」提示。
+        """
+        calls: list[str] = []
+        browser = self._browser(calls)
+        flag = {"stop": False}
+
+        def wait(*_args, **_kwargs):
+            flag["stop"] = True
+            return True
+
+        browser.wait_app_code = wait
+        with self.assertRaises(HumanStopped):
+            browser.answer("sid", "int x;", dry_run=True,
+                           should_stop=lambda: flag["stop"])
+        self.assertEqual(calls, [], "dry-run 本来就不提交，这里只断言语义")
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

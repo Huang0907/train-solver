@@ -1046,10 +1046,12 @@ class HumanBrowser:
         if verdict is False:
             return HumanResult(False, "前端组件里的代码没同步完整，已放弃提交（避免白交一次）", chars, 1)
 
-        if dry_run:
-            return HumanResult(True, f"已输入 {chars} 字符并校验通过（dry-run，未提交）", chars, 1)
-        # 提交前的最后一道闸：同步窗口里点了停止，就一次 submit 都不许发（0.6.8）
+        # 提交前的最后一道闸：同步窗口里点了停止，就一次 submit 都不许发（0.6.8）。
+        # 放在 dry-run **前面**：dry-run 本来就不提交，但「停止」的语义必须如实返回，
+        # 否则主循环会把没跑完的题记成「做过一道」、还会打一次假的「遇错即停」提示。
         if should_stop is not None and should_stop():
             raise HumanStopped("已按「停止」，提交前中断")
+        if dry_run:
+            return HumanResult(True, f"已输入 {chars} 字符并校验通过（dry-run，未提交）", chars, 1)
         self.submit()
         return HumanResult(True, f"已输入 {chars} 字符并提交", chars, 1)
