@@ -609,12 +609,21 @@ class Runner:
         self._dump(artifact_dir / "answerPaper.json", answer_paper)
         self._write_statement(artifact_dir, questions)
 
-        if run_config.dry_run:
+        # 真人模式下「打字」本身就是作答：dry-run / submit=false 也要先打完再决定交不交，
+        # 否则界面上配的思考时间与逐字输入都不会发生（0.6.4 修）。
+        human_ready = bool(
+            self.human is not None
+            and outcome.questions
+            and outcome.questions[0].kind == "programming"
+        )
+        will_submit = bool(run_config.submit) and not run_config.dry_run
+
+        if run_config.dry_run and not human_ready:
             outcome.detail = "dry-run：未提交"
             self.log("  dry-run：已保存题目与答案，未调用 submit")
             return outcome
 
-        if not run_config.submit:
+        if not run_config.submit and not human_ready:
             self.log("  --no-submit：未提交（该会话将留在「未完成」状态）")
             outcome.detail = "未提交"
             return outcome
@@ -627,7 +636,7 @@ class Runner:
 
         # 自检明确未通过（编译不过 / 样例输出对不上）默认绝不提交：
         # 交上去基本就是 0 分，还白占一次作答机会。确实要交就 --force。
-        if unverified and not run_config.allow_unverified_submit:
+        if will_submit and unverified and not run_config.allow_unverified_submit:
             outcome.detail = (
                 f"跳过提交：{len(unverified)} 道题自检未通过（默认不提交未过校验的答案；"
                 "确要强制提交加 --force / 配置 allow_unverified_submit = true）"
@@ -638,7 +647,7 @@ class Runner:
             return outcome
 
         # 题目样例没还原出来（无法校验）默认仍提交，靠平台判分反馈修复；--strict-verify 才拦。
-        if unchecked and run_config.require_verified:
+        if will_submit and unchecked and run_config.require_verified:
             outcome.detail = (
                 f"跳过提交：{len(unchecked)} 道题无法校验输出（题面样例没还原出来）"
                 "（strict-verify 模式；去掉 --strict-verify 即可照常提交）"
@@ -648,7 +657,7 @@ class Runner:
                 self._abandon_session(session_id, reason="无法校验，不提交")
             return outcome
 
-        if unchecked:
+        if will_submit and unchecked:
             self.log(
                 f"  ⚠ {len(unchecked)} 道题题面没有可还原的样例，无法本地逐字节比对；"
                 "按默认策略仍提交，由平台判分驱动修复"
@@ -656,7 +665,7 @@ class Runner:
 
         # ---- 人工模拟输入分支：用浏览器逐字符打字 + 真实点击提交 ----
         used_human = False
-        if self.human is not None and outcome.questions and outcome.questions[0].kind == "programming":
+        if human_ready:
             code = outcome.questions[0].code_or_answer
             delay = self._human_delay_seconds()
             if delay > 0:
@@ -670,9 +679,14 @@ class Runner:
                     if run_config.cleanup_abandoned:
                         self._abandon_session(session_id, reason="停止：模拟思考等待中未作答")
                     return outcome
-            self.log("  🧑‍💻 浏览器作答：逐字符输入（模拟真人）+ 真实点击提交")
+            self.log(
+                "  🧑‍💻 浏览器作答：逐字符输入（模拟真人）"
+                + ("+ 真实点击提交" if will_submit else "（本题按设置不提交）")
+            )
             try:
-                result = self.human.answer(session_id, code, dry_run=run_config.human_dry_run)
+                result = self.human.answer(
+                    session_id, code, dry_run=run_config.human_dry_run or not will_submit
+                )
             except Exception as exc:  # noqa: BLE001 - 浏览器问题不该把整个流程炸掉
                 outcome.detail = f"浏览器输入失败：{type(exc).__name__}: {exc}"
                 self.log(f"  ✗ {outcome.detail}")
@@ -689,7 +703,15 @@ class Runner:
 
             self.log(f"  ✓ {result.message}")
             if run_config.human_dry_run:
-                outcome.detail = "human dry-run：已按人类方式输入并校验，未提交"
+                outcome.detail = "human dry-run：已按真人方式输入并校验，未提交"
+                return outcome
+            if not will_submit:
+                outcome.detail = (
+                    "dry-run：已按真人方式输入并校验，未提交"
+                    if run_config.dry_run
+                    else "submit=false：已按真人方式输入并校验，未提交"
+                )
+                self.log(f"  {outcome.detail}")
                 return outcome
             used_human = True
 

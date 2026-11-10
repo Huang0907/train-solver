@@ -375,6 +375,64 @@ class WhitelistHintTest(unittest.TestCase):
                               config, log=lambda *_: None)
 
 
+class HumanInDryRunTest(unittest.TestCase):
+    """真人模式下 dry-run / submit=false 也要真的打字（0.6.4 修）。
+
+    旧逻辑在 dry_run / submit=false 时提前 return，导致「模拟真人打字」根本不发生，
+    界面上配的随机思考时间与逐字输入都白设。
+    """
+
+    @staticmethod
+    def _run(**overrides):
+        from trainsolve.human import HumanResult
+
+        typed: list[bool] = []
+
+        class FakeHuman:
+            def answer(self, session_id, code, dry_run=False):
+                typed.append(bool(dry_run))
+                return HumanResult(ok=True, message="已输入并校验")
+
+        config = make_config(tempfile.mkdtemp())
+        config.run.sleep_between = 0
+        config.run.human_input = True
+        config.run.human_delay_min = 0
+        config.run.human_delay_max = 0
+        for key, value in overrides.items():
+            setattr(config.run, key, value)
+        client = FakeClient(live_record())
+        runner = Runner(client, StubSolver(ANSWERS), config, log=lambda *_: None, human=FakeHuman())
+        return runner, client, typed
+
+    def test_dry_run_still_types_and_never_submits(self):
+        runner, client, typed = self._run(dry_run=True, submit=False)
+        outcome = runner.run_once(1, 1)
+        self.assertEqual(typed, [True], "dry-run 应以「不提交」方式逐字输入")
+        self.assertEqual(client.submitted, 0)
+        self.assertEqual(client.posted, [], "dry-run 不该暂存答案")
+        self.assertIn("dry-run", outcome.detail)
+
+    def test_submit_false_still_types(self):
+        runner, client, typed = self._run(dry_run=False, submit=False)
+        outcome = runner.run_once(1, 1)
+        self.assertEqual(typed, [True])
+        self.assertEqual(client.submitted, 0)
+        self.assertIn("submit=false", outcome.detail)
+
+    def test_real_submit_still_types_in_submit_mode(self):
+        runner, client, typed = self._run(dry_run=False, submit=True)
+        runner.run_once(1, 1)
+        self.assertEqual(typed, [False], "真提交时应真实输入并点提交")
+        self.assertEqual(client.submitted, 0, "提交由浏览器完成，不走 API submit")
+
+    def test_without_human_dry_run_still_short_circuits(self):
+        runner, client, typed = self._run(dry_run=True, submit=False)
+        runner.human = None
+        outcome = runner.run_once(1, 1)
+        self.assertEqual(client.submitted, 0)
+        self.assertIn("未提交", outcome.detail)
+
+
 class HumanDelayTest(unittest.TestCase):
     """模拟思考时间：每题在区间内随机等待，可被「停止」中断。"""
 
