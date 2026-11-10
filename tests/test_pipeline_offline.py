@@ -73,7 +73,7 @@ class FakeClient:
     def wait_score(self, session_id, timeout=10, interval=0.1, log=None):
         return copy.deepcopy(SCORE)
 
-    def wait_record(self, session_id, timeout=10, interval=0.1, log=None):
+    def wait_record(self, session_id, timeout=10, interval=0.1, log=None, should_stop=None):
         return copy.deepcopy(self.record)
 
     def score(self, session_id):
@@ -670,7 +670,7 @@ class PostSubmitRepairTest(unittest.TestCase):
         client.submit = submit
         client.score = score
         client.reanswer = reanswer
-        client.wait_record = lambda session_id, timeout=10, interval=0.1, log=None: copy.deepcopy(client.record)
+        client.wait_record = lambda session_id, timeout=10, interval=0.1, log=None, should_stop=None: copy.deepcopy(client.record)
         return client
 
     def test_retries_until_full_score(self):

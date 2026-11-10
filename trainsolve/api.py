@@ -470,16 +470,23 @@ class TrainClient:
         log(f"评分轮询超时（{timeout:.0f}s），返回最后一次结果")
         return last
 
-    def wait_record(self, session_id: str, timeout: float = 300.0, interval: float = 3.0, log=None) -> dict[str, Any]:
+    def wait_record(self, session_id: str, timeout: float = 300.0, interval: float = 3.0, log=None,
+                    should_stop=None) -> dict[str, Any]:
         """轮询答题记录状态，直到离开「未完成/评分中」。
 
         比只轮询 score-result 更可靠：平台判题是异步队列，score-result 可能长时间为空，
         但记录的 state 一旦变成「已完成/失败」就说明判完了。
+
+        传入 `should_stop` 后，每轮先看一次停止标志：用户点了停止就立刻返回手上的
+        最后一条记录（可能是「评分中」），把「要不要继续等」交给调用方决定（0.6.6）。
         """
         deadline = time.time() + timeout
         log = log or self.log
         record: dict[str, Any] = {}
         while time.time() < deadline:
+            if should_stop is not None and should_stop():
+                log("  已请求停止：不再等评分，记录留给平台自己判")
+                return record
             try:
                 record = self.paper(session_id)
             except ApiError as exc:

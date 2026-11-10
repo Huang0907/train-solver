@@ -88,6 +88,8 @@ class RunOutcome:
     detail: str = ""
     artifact_dir: str = ""
     skipped: bool = False
+    # 用户点了「停止」：本题没走完，既不计进度也不算答错（0.6.6）
+    stopped: bool = False
     # 模型/网关故障（503、超时、鉴权失败等），不是“答错”，不该计入连续失败
     infra_error: bool = False
 
@@ -309,6 +311,11 @@ class Runner:
         kind = qtype_kind(qtype)
         language = int(question.get("language") or 1)
 
+        # 停止后连模型都不该再请求（0.6.6）：一次 solve 可能几十秒到几分钟，
+        # 以前的写法会让「点停止」之后再白花一次调用。
+        if self.should_stop():
+            raise StopRequested("已请求停止，未开始解题")
+
         if kind == "design":
             raise SolverError(f"Q{question.get('id')} 是设计题（qType={qtype}），本工具不支持")
         if kind == "objective":
@@ -332,6 +339,8 @@ class Runner:
             )
             if result.passed or attempt == self.config.run.max_repairs:
                 break
+            if self.should_stop():
+                raise StopRequested("已请求停止，不再请求模型修复")
             self.log("  回灌判题反馈，请求模型修复…")
             try:
                 repaired = self.solver.repair(question, code, result.feedback)
@@ -426,6 +435,22 @@ class Runner:
             raise ValueError("peek_existing 需要 sessionId")
         self.login()
         return self._peek_session(session_id)
+
+    def _halted(
+        self, outcome: "RunOutcome", detail: str, *, session_id: str = "", cleanup_reason: str = ""
+    ) -> "RunOutcome":
+        """用户点了「停止」：本题标成 stopped 收尾，并把不打算提交的会话清掉（0.6.6）。
+
+        `stopped` 既不计进度也不计失败——主循环拿到它就直接结束本轮，不会再抽题，
+        更不会把已经算好的答案偷偷提交出去（0.6.5 之前确实会：停止只在循环开头与
+        打字循环里查，解题和评分两段完全不看标志）。
+        """
+        outcome.detail = detail
+        outcome.stopped = True
+        self.log(f"  ⏹ {detail}")
+        if session_id and self.config.run.cleanup_abandoned:
+            self._abandon_session(session_id, reason=cleanup_reason or "停止：未提交")
+        return outcome
 
     def _require_record(self, record, session_id: str) -> dict:
         """平台返回空体时给可诊断错误，而不是让 `record.get` 抛 AttributeError（2026-11-05）。"""
@@ -557,6 +582,14 @@ class Runner:
         if self.on_record:
             self.on_record(record)
 
+        # 抽到题之后才点停止：这道题一步都别做，直接放弃会话（0.6.6）
+        if self.should_stop():
+            return self._halted(
+                RunOutcome(session_id=session_id, ok=False, state=state, artifact_dir=str(artifact_dir)),
+                "已停止：抽到题后未作答",
+                session_id=session_id, cleanup_reason="停止：未作答",
+            )
+
         # 题型白名单：抽到不想要的题型（例如改错题）就跳过，绝不提交
         allowed = {int(item) for item in (run_config.qtypes or [])}
         if allowed and questions:
@@ -598,6 +631,12 @@ class Runner:
                 self._write_answer(artifact_dir, question, question_outcome)
                 if self.on_answer:
                     self.on_answer(question, question_outcome)
+        except StopRequested:
+            # 解题途中点了停止：不暂存、绝不提交（0.6.6）
+            return self._halted(
+                outcome, "已停止（解题过程中被中断，未提交）",
+                session_id=session_id, cleanup_reason="停止：解题中断",
+            )
         except SolverError as exc:
             outcome.detail = f"解题失败：{exc}"
             outcome.infra_error = True
@@ -605,6 +644,14 @@ class Runner:
             if run_config.cleanup_abandoned:
                 self._abandon_session(session_id, reason="模型未给出答案")
             return outcome
+
+        # 解题跑完才发现停止：答案已经在手，但也**不许**再往下走（不暂存、不提交）。
+        # 这是 0.6.5 之前最危险的一条：停止只在主循环开头与打字循环里查。
+        if self.should_stop():
+            return self._halted(
+                outcome, "已停止（解题完成后未暂存、未提交）",
+                session_id=session_id, cleanup_reason="停止：解题后未提交",
+            )
 
         answer_paper = self._answer_paper_for(record, texts)
         self._dump(artifact_dir / "answerPaper.json", answer_paper)
@@ -732,13 +779,32 @@ class Runner:
         attempts = 0
         results: list[dict] = []
         while True:
+            if self.should_stop() and (not used_human or attempts):
+                # 还没发过 submit（重答也算）：停止就是停止，一次 submit 都不许发
+                return self._halted(
+                    outcome, "已停止（提交前中断，未提交）",
+                    session_id=session_id, cleanup_reason="停止：提交前未提交",
+                )
             if not used_human or attempts:
                 # 首次真人提交由浏览器完成；后续重答走 API（真人重打一遍成本太高）
                 submit_code, _submit_raw = self._submit_with_evidence(session_id, artifact_dir, attempts, results)
             else:
                 submit_code = None
                 self.log("  浏览器已提交，等待评分…")
-            record = self.client.wait_record(session_id, timeout=run_config.score_timeout, log=self.log)
+            record = self.client.wait_record(
+                session_id, timeout=run_config.score_timeout, log=self.log, should_stop=self.should_stop
+            )
+
+            if self.should_stop() and (
+                not record or int(record.get("state", STATE_SCORING)) in (STATE_UNDONE, STATE_SCORING)
+            ):
+                # 已经提交过（API 或浏览器）：只是不等评分了，记录留给平台自己判。
+                # 这种收尾**不能**清会话——清掉会把刚提交的记录也一起动。
+                outcome.detail = "已停止（已提交，评分未回；以平台记录为准）"
+                outcome.stopped = True
+                self.log(f"  ⏹ {outcome.detail}")
+                return outcome
+
             results = self.client.score(session_id)
 
             if not record or int(record.get("state", STATE_SCORING)) in (STATE_UNDONE, STATE_SCORING):
@@ -768,6 +834,10 @@ class Runner:
             })
 
             # 未满分 → 按平台报错修复后再提交
+            if self.should_stop():
+                self.log("  ⏹ 已请求停止：不再重答（重答会撤销刚提交的成绩）")
+                break
+
             if (
                 not run_config.auto_fix_from_judge
                 or attempts >= run_config.max_reanswers
@@ -954,6 +1024,13 @@ class Runner:
                 self.log(f"✗ 接口错误：{exc} {exc.body[:200] if exc.body else ''}")
                 outcome = RunOutcome(session_id="", ok=False, detail=str(exc))
 
+            if outcome.stopped:
+                # 停止收尾：让用户看到这一题的结果（未提交），但不再算进度、不再抽题
+                outcomes.append(outcome)
+                self._print_outcome(outcome)
+                self.log("⏹ 已按停止请求结束本轮：不再抽题，也不会再提交")
+                break
+
             if outcome.skipped:
                 skips += 1
                 self.log(f"↷ 跳过：{outcome.detail}（自动抽下一题）")
@@ -981,7 +1058,7 @@ class Runner:
                 if infra_errors >= run_config.max_consecutive_infra_errors:
                     self.log("⏹ 连续出现模型故障，先停下来（检查网关/Key 后再跑）。")
                     break
-                time.sleep(min(30, run_config.sleep_between * 2))
+                self._sleep_unless_stopped(min(30, run_config.sleep_between * 2))
                 continue
             infra_errors = 0
 
@@ -1008,7 +1085,7 @@ class Runner:
                     break
 
             if target is None or done < target:
-                time.sleep(run_config.sleep_between)
+                self._sleep_unless_stopped(run_config.sleep_between)
 
         if auto:
             self._print_progress(done, outcomes, auto, final=True)

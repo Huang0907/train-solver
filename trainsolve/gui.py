@@ -908,7 +908,14 @@ class ClientApp(tk.Tk):
         event = threading.Event()
         box: dict[str, bool] = {}
         self.queue.put(("ask", (question, event, box)))
-        event.wait(timeout=120)
+        # 不能干等 120 秒：停止按钮一点，这里就得放开（0.6.6）
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            if event.wait(0.25):
+                break
+            if self.stop_event.is_set():
+                self.log("⏹ 已请求停止：取消这次确认")
+                return False
         return bool(box.get("answer"))
 
     # ------------------------------------------------------------ 动作
@@ -1100,7 +1107,7 @@ class ClientApp(tk.Tk):
                 runner = self._runner(solve_cfg, solver, human)
                 self.log(f"Solver = {solver.name}；编译器 = {solve_cfg.run.gcc or find_compiler() or '未找到'}")
                 if loop:
-                    self.log("🤖 全自动模式已启动（点「停止」会在当前题做完后停）")
+                    self.log("🤖 全自动模式已启动（点「停止」会立刻中断：打字中逐字符查、等待中按切片查）")
                 outcomes = runner.run()
             finally:
                 self._close_human(human)
@@ -1200,7 +1207,10 @@ class ClientApp(tk.Tk):
             self.set_status("就绪")   # 与窗口初始状态用同一个词，别再造一个新状态名
             return
         self.stop_event.set()
-        self.log("⏹ 已请求停止：当前这一轮结束后不再继续，也不会再抽新题。")
+        self.log(
+            "⏹ 已请求停止：正在打字会立刻停手；解题/评分看一次网络往返——"
+            "已发出的模型请求返回后就停，不再暂存、不再提交。"
+        )
         self.set_status("已请求停止…")
 
     def on_settings(self) -> None:
