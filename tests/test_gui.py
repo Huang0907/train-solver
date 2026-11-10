@@ -651,6 +651,51 @@ class SettingsDialogTest(unittest.TestCase):
             app.stop_event.set()
             app.destroy()
 
+    def test_main_window_pacing_controls_apply(self):
+        """主界面的打字速度 / 随机思考要能直接写进配置（区间写反自动交换、越界夹紧）。"""
+        app = gui.ClientApp()
+        app.withdraw()
+        try:
+            app.var_cpm_main.set(320.0)
+            app.var_delay_min_main.set(8.0)
+            app.var_delay_max_main.set(3.0)
+            app._on_pacing_change()
+            cfg = app.config_data
+            self.assertEqual(cfg.run.typing_cpm, 320.0)
+            self.assertEqual(cfg.run.human_delay_min, 3.0)
+            self.assertEqual(cfg.run.human_delay_max, 8.0)
+
+            app.var_cpm_main.set(5000.0)
+            app.var_delay_max_main.set(99.0)
+            app._on_pacing_change()
+            self.assertEqual(cfg.run.typing_cpm, 800.0)
+            self.assertEqual(cfg.run.human_delay_max, 60.0)
+
+            snap = app._cfg_snapshot()
+            self.assertEqual(snap.run.typing_cpm, 800.0)
+            self.assertEqual(snap.run.human_delay_max, 60.0)
+        finally:
+            app.stop_event.set()
+            app.destroy()
+
+    def test_settings_save_syncs_main_controls(self):
+        """设置里改完保存，主界面那两个控件要跟着变。"""
+        app = gui.ClientApp()
+        app.withdraw()
+        try:
+            dialog = gui.SettingsDialog(app)
+            dialog.var_cpm.set(400.0)
+            dialog.var_delay_min.set(2.0)
+            dialog.var_delay_max.set(6.0)
+            with mock.patch.object(gui, "save_client_config"):
+                dialog.on_save()
+            self.assertEqual(app.var_cpm_main.get(), 400.0)
+            self.assertEqual(app.var_delay_min_main.get(), 2.0)
+            self.assertEqual(app.var_delay_max_main.get(), 6.0)
+        finally:
+            app.stop_event.set()
+            app.destroy()
+
     def test_keep_going_settings_are_saved(self):
         """「遇到未满分也继续」勾选 = stop_on_failure 关，两个方向都要能存。"""
         app = gui.ClientApp()

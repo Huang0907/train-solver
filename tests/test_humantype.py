@@ -7,6 +7,7 @@ from trainsolve.humantype import (
     HumanTyper,
     TimingModel,
     TypingProfile,
+    TypingStopped,
     describe_human_pacing,
     first_diff,
     normalize_code,
@@ -279,6 +280,81 @@ class PacingSummaryTest(unittest.TestCase):
             human_delay_min=1, human_delay_max=2, backspace_rate=0.02, backspace_max=3))
         self.assertIn("每题随机思考 1–2 分钟", text)
         self.assertIn("随机退格 0.02 / 每次最多 3 字符", text)
+
+
+class StopDuringTypingTest(unittest.TestCase):
+    """「停止」必须能打断正在进行的打字，而不是等整段打完（0.6.5）。"""
+
+    def test_stop_raises_while_typing(self):
+        io = FakeIO()
+        state = {"stop": False}
+        typer = HumanTyper(
+            io, TypingProfile(typo_rate=0.0),
+            log=lambda *_: None, sleep=lambda _s: None, rng=random.Random(7),
+            should_stop=lambda: state["stop"],
+        )
+        original = io.type_char
+
+        def type_char(ch: str) -> None:
+            original(ch)
+            if len(io.doc) >= 5:
+                state["stop"] = True
+
+        io.type_char = type_char
+        with self.assertRaises(TypingStopped):
+            typer.type_and_verify(CODE, rounds=1)
+        self.assertLess(len(io.doc), len(normalize_code(CODE)), "应该停在半途，而不是打完整段")
+
+    def test_no_stop_types_everything(self):
+        io = FakeIO()
+        typer, _ = make_typer(io, typo_rate=0.0)
+        self.assertTrue(typer.type_and_verify(CODE, rounds=1))
+
+
+class FocusTest(unittest.TestCase):
+    """焦点自愈：焦点不在编辑器时用 CDP 鼠标点回去，不依赖窗口是否在前台。"""
+
+    def test_ensure_focus_clicks_when_focus_is_elsewhere(self):
+        from trainsolve.human import CDPTyperIO
+
+        sent: list[tuple[str, dict]] = []
+
+        class FakeCDP:
+            def send(self, method, payload=None):
+                sent.append((method, payload or {}))
+                return {}
+
+        class FakePage:
+            pass
+
+        io = CDPTyperIO(FakePage(), FakeCDP())
+        focus = {"text": "other:BODY"}
+        io.focus_info = lambda: focus["text"]  # type: ignore[method-assign]
+
+        def evaluate(_expr):
+            focus["text"] = "editor:cm-content"
+            return {"x": 120.0, "y": 40.0}
+
+        io._evaluate = evaluate  # type: ignore[method-assign]
+        info = io.ensure_focus()
+        self.assertTrue(info.startswith("editor:"))
+        self.assertEqual([m for m, _ in sent], ["Input.dispatchMouseEvent"] * 2)
+        self.assertEqual(sent[0][1]["button"], "left")
+
+    def test_ensure_focus_is_noop_when_already_focused(self):
+        from trainsolve.human import CDPTyperIO
+
+        sent = []
+
+        class FakeCDP:
+            def send(self, method, payload=None):
+                sent.append(method)
+                return {}
+
+        io = CDPTyperIO(object(), FakeCDP())
+        io.focus_info = lambda: "editor:cm-content"  # type: ignore[method-assign]
+        self.assertEqual(io.ensure_focus(), "editor:cm-content")
+        self.assertEqual(sent, [])
 
 
 class HumanTyperTest(unittest.TestCase):

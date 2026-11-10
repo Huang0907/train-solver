@@ -495,6 +495,30 @@ class ClientApp(tk.Tk):
                                          wraplength=self._pad(236))
         self.lbl_submit_mode.pack(anchor="w", padx=self._pad(8), pady=(self._pad(2), 0))
 
+        # 0.6.5：把最常调的两项直接放到主界面（设置里仍有一份，两边同步）
+        pace1 = ttk.Frame(left)
+        pace1.pack(anchor="w", fill="x", padx=self._pad(8), pady=(self._pad(4), 0))
+        ttk.Label(pace1, text="打字速度").pack(side="left")
+        self.var_cpm_main = tk.DoubleVar(value=self.config_data.run.typing_cpm)
+        ttk.Spinbox(pace1, from_=60, to=800, increment=20, width=5,
+                    textvariable=self.var_cpm_main, command=self._on_pacing_change).pack(
+            side="left", padx=self._pad(3))
+        ttk.Label(pace1, text="字符/分").pack(side="left")
+
+        pace2 = ttk.Frame(left)
+        pace2.pack(anchor="w", fill="x", padx=self._pad(8))
+        ttk.Label(pace2, text="随机思考").pack(side="left")
+        self.var_delay_min_main = tk.DoubleVar(value=self.config_data.run.human_delay_min)
+        ttk.Spinbox(pace2, from_=0, to=60, increment=1, width=4,
+                    textvariable=self.var_delay_min_main, command=self._on_pacing_change).pack(
+            side="left", padx=self._pad(3))
+        ttk.Label(pace2, text="–").pack(side="left")
+        self.var_delay_max_main = tk.DoubleVar(value=self.config_data.run.human_delay_max)
+        ttk.Spinbox(pace2, from_=0, to=60, increment=1, width=4,
+                    textvariable=self.var_delay_max_main, command=self._on_pacing_change).pack(
+            side="left", padx=self._pad(3))
+        ttk.Label(pace2, text="分钟").pack(side="left")
+
         ttk.Separator(left).pack(fill="x", pady=self._pad(10), padx=self._pad(8))
 
         ttk.Button(left, text="刷新标签", command=self.on_refresh_tags).pack(
@@ -583,8 +607,7 @@ class ClientApp(tk.Tk):
         judge_name = next((n for n, v in JUDGES if v == cfg.run.judge), "本地 gcc")
         self.var_judge.set(judge_name)
         self.var_count.set(cfg.run.count)
-        self.var_human.set(bool(cfg.run.human_input))
-        self._on_human_toggle()
+        self._sync_human_controls()
         self._refresh_model_label()
 
     def _refresh_model_label(self) -> None:
@@ -652,6 +675,7 @@ class ClientApp(tk.Tk):
         cfg.run.count = 0 if getattr(self, "auto_mode", False) else max(1, int(self.var_count.get() or 1))
         cfg.run.judge = next(v for n, v in JUDGES if n == self.var_judge.get())
         cfg.run.human_input = bool(self.var_human.get())
+        self._apply_pacing()
         # 选了客观题型时，编程类白名单不适用 → 不限制
         if cfg.run.qbase_type < 4 and cfg.run.qtypes in ([5], [5, 6, 7]):
             cfg.run.qtypes = []
@@ -709,6 +733,45 @@ class ClientApp(tk.Tk):
         """这次运行到底会不会真提交：dry_run 或 submit=false 都不会。"""
         cfg = self.config_data
         return bool(cfg.run.submit) and not bool(cfg.run.dry_run)
+
+    def _apply_pacing(self) -> None:
+        """把主界面的「打字速度 / 随机思考」写进配置（越界自动夹紧、区间写反自动换）。"""
+        cfg = self.config_data
+        try:
+            cpm = float(self.var_cpm_main.get())
+        except (tk.TclError, ValueError):
+            cpm = cfg.run.typing_cpm
+        cfg.run.typing_cpm = min(800.0, max(60.0, cpm))
+        try:
+            low = float(self.var_delay_min_main.get() or 0)
+            high = float(self.var_delay_max_main.get() or 0)
+        except (tk.TclError, ValueError):
+            low, high = cfg.run.human_delay_min, cfg.run.human_delay_max
+        low = min(60.0, max(0.0, low))
+        high = min(60.0, max(0.0, high))
+        if low > high:
+            low, high = high, low
+        cfg.run.human_delay_min = low
+        cfg.run.human_delay_max = high
+
+    def _on_pacing_change(self) -> None:
+        self._apply_pacing()
+        self._on_human_toggle()
+
+    def _sync_human_controls(self) -> None:
+        """设置对话框保存后，把配置里的值同步回主界面。"""
+        cfg = self.config_data
+        self.var_human.set(bool(cfg.run.human_input))
+        for var, value in (
+            (self.var_cpm_main, cfg.run.typing_cpm),
+            (self.var_delay_min_main, cfg.run.human_delay_min),
+            (self.var_delay_max_main, cfg.run.human_delay_max),
+        ):
+            try:
+                var.set(value)
+            except tk.TclError:
+                pass
+        self._on_human_toggle()
 
     def _refresh_submit_mode(self) -> None:
         """主界面常驻一行：试运行 / 不提交 / 真提交。"""
@@ -1579,7 +1642,7 @@ class SettingsDialog(tk.Toplevel):
         cfg.run.auto_cleanup_all = bool(self.var_auto_clean_all.get())
         cfg.run.auto_cleanup_temp_hours = min(72.0, max(0.0, float(self.var_auto_temp_hours.get() or 0)))
         save_client_config(cfg, log=self.app.log)
-        self.app.var_human.set(cfg.run.human_input)
+        self.app._sync_human_controls()
         self.app._on_human_toggle()
         self.app.log(f"设置已保存：{settings_path()}")
         self.destroy()

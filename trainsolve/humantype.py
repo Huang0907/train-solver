@@ -42,6 +42,14 @@ class TyperIO(Protocol):
 
     def focus_info(self) -> str: ...
 
+    def ensure_focus(self) -> str:
+        """尽力把焦点放回编辑器，返回焦点描述。
+
+        默认实现不做任何事（离线测试的假 IO 只需记住状态）；真机实现会在焦点
+        不在编辑器时用页面内 DOM 聚焦 / CDP 鼠标点一下，**不依赖窗口是否在前台**。
+        """
+        return self.focus_info()
+
 
 # ---------------------------------------------------------------- 参数
 
@@ -231,6 +239,14 @@ def first_diff(expected: str, actual: str) -> tuple[int, int, str, str]:
 # ---------------------------------------------------------------- 打字器
 
 
+class TypingStopped(RuntimeError):
+    """打字过程中收到「停止」请求：立刻收手，不再继续敲。"""
+
+
+class HumanStopped(RuntimeError):
+    """真人作答流程被「停止」打断（打字中或打字后、提交前）。"""
+
+
 class HumanTyper:
     """把一段代码"像人一样"打进编辑器，并校验结果。"""
 
@@ -242,12 +258,15 @@ class HumanTyper:
         log: Callable[[str], None] = print,
         rng: random.Random | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        should_stop: Callable[[], bool] | None = None,
     ) -> None:
         self.io = io
         self.profile = profile or TypingProfile()
         self.timing = TimingModel(self.profile, rng)
         self.log = log
         self.sleep = sleep
+        # 停止信号：每打一个字符都问一次，命中就抛 TypingStopped（0.6.5）
+        self.should_stop = should_stop or (lambda: False)
         # 统计（写进日志，便于判断真机行为和离线测试是否一致）
         self.indent_fixes = 0
         self.line_repairs = 0
@@ -265,6 +284,8 @@ class HumanTyper:
         self.sleep(0.05)
 
     def _pause_char(self, burst_left: int) -> int:
+        if self.should_stop():
+            raise TypingStopped()
         if burst_left > 0:
             self.sleep(self.profile.burst_delay)
             return burst_left - 1
@@ -407,6 +428,12 @@ class HumanTyper:
                 self._newline(index)
                 self.sleep(self.timing.line_delay())
             want_indent = self._leading_spaces(line)
+            if index % 8 == 0:
+                # 每 8 行确认一次焦点还在编辑器里：窗口被切走 / 页面重绘都可能在
+                # 中途把焦点弄丢，丢了之后按键就不进编辑器了（0.6.5）。
+                ensure = getattr(self.io, "ensure_focus", None)
+                if ensure is not None:
+                    ensure()
             self._align_indent(want_indent)
             self._type_body(line[want_indent:], allow_typos=allow_typos)
             self._repair_line(line)

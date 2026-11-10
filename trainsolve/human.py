@@ -25,7 +25,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .humantype import HumanTyper, TypingProfile, first_diff, normalize_code
+from .humantype import (
+    HumanStopped,
+    HumanTyper,
+    TypingProfile,
+    TypingStopped,
+    first_diff,
+    normalize_code,
+)
 
 CHROME_CANDIDATES = (
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -110,6 +117,16 @@ FOCUS_JS = """() => {
   return (inEditor ? 'editor:' : 'other:') + (a.className || a.tagName);
 }"""
 
+# 取编辑器中心点并顺手 DOM 聚焦；返回坐标供 CDP 鼠标点击落光标。
+# 全程在页面/渲染进程内完成，不需要 Chrome 窗口在前台。
+EDITOR_BOX_JS = """(() => {
+  const el = document.querySelector('.cm-content') || document.querySelector('.cm-editor');
+  if (!el) return null;
+  el.focus();
+  const r = el.getBoundingClientRect();
+  return {x: r.x + r.width / 2, y: r.y + Math.min(Math.max(8, r.height - 4), 24)};
+})()"""
+
 
 class HumanError(RuntimeError):
     pass
@@ -155,6 +172,16 @@ class PlaywrightIO:
 
     def focus_info(self) -> str:
         return str(self.page.evaluate(FOCUS_JS))
+
+    def ensure_focus(self) -> str:
+        info = self.focus_info()
+        if info.startswith("editor:"):
+            return info
+        try:
+            self.click_editor()
+        except Exception:  # noqa: BLE001 - 聚焦失败交给调用方按校验结果处理
+            return str(info)
+        return str(self.focus_info())
 
 
 # ---------------------------------------------------------------- 原生按键
@@ -335,6 +362,26 @@ class CDPTyperIO:
 
     def focus_info(self) -> str:
         return str(self._evaluate(f"({FOCUS_JS})()"))
+
+    def ensure_focus(self) -> str:
+        """焦点不在编辑器时，用页面内聚焦 + CDP 鼠标点一下把光标放回去。
+
+        这两步都是 CDP 注入，**不要求 Chrome 窗口在前台**，也不会把窗口拽到前面。
+        """
+        info = self.focus_info()
+        if info.startswith("editor:"):
+            return info
+        try:
+            box = self._evaluate(EDITOR_BOX_JS)
+            if box:
+                x, y = float(box["x"]), float(box["y"])
+                for kind in ("mousePressed", "mouseReleased"):
+                    self.cdp.send("Input.dispatchMouseEvent", {
+                        "type": kind, "x": x, "y": y, "button": "left", "clickCount": 1,
+                    })
+        except Exception:  # noqa: BLE001 - 聚焦失败按后续校验兜底
+            pass
+        return self.focus_info()
 
 
 # ---------------------------------------------------------------- 工具
@@ -591,7 +638,7 @@ class HumanBrowser:
         self._dismiss_dialog()
         return self._editor_visible(8000)
 
-    def type_code(self, code: str) -> tuple[bool, int]:
+    def type_code(self, code: str, *, should_stop=None) -> tuple[bool, int]:
         """优先用原生 CDP 按键（符号带真 Shift）；拿不到 CDP 会话则退回 playwright。"""
         cdp_session = None
         if self.config_native_keys and self._context is not None:
@@ -600,10 +647,19 @@ class HumanBrowser:
             except Exception as exc:  # noqa: BLE001
                 self.log(f"  ⚠ 无法创建 CDP 会话（{exc}），退回 playwright 按键")
         io = CDPTyperIO(self.page, cdp_session) if cdp_session else PlaywrightIO(self.page, shift_symbols=False)
-        typer = HumanTyper(io, self.profile, log=self.log)
+        typer = HumanTyper(io, self.profile, log=self.log, should_stop=should_stop)
         self.typer = typer
         expected_len = len(normalize_code(code))
-        ok = typer.type_and_verify(code)
+        try:
+            ok = typer.type_and_verify(code)
+        except TypingStopped as exc:
+            self.typing_stats = {
+                "indent_fixes": typer.indent_fixes,
+                "line_repairs": typer.line_repairs,
+                "rounds": typer.rounds_used,
+                "cpm": typer.speed_cpm,
+            }
+            raise HumanStopped("已按「停止」中断打字") from exc
         self.typing_stats = {
             "indent_fixes": typer.indent_fixes,
             "line_repairs": typer.line_repairs,
@@ -891,13 +947,22 @@ class HumanBrowser:
 
     # -------------------------------------------------------- 一体化入口
 
-    def answer(self, session_id: str, code: str, *, dry_run: bool = False) -> HumanResult:
-        """打开会话 → 打字 → 核对前端状态 →（可选）提交。"""
+    def answer(self, session_id: str, code: str, *, dry_run: bool = False,
+               should_stop=None) -> HumanResult:
+        """打开会话 → 打字 → 核对前端状态 →（可选）提交。
+
+        `should_stop` 传入后，打字过程中每敲一个字符都会问一次，命中即抛
+        HumanStopped，不再继续（也不会提交）。
+        """
+        if should_stop is not None and should_stop():
+            raise HumanStopped("已按「停止」，未开始作答")
         self.open_answer_page(session_id)
         self.install_capture()
         mark = self._capture_len()
         net_mark = self._net_len()
-        ok, chars = self.type_code(code)
+        ok, chars = self.type_code(code, should_stop=should_stop)
+        if should_stop is not None and should_stop():
+            raise HumanStopped("已按「停止」，打字后不再提交")
         if not ok:
             return HumanResult(False, "打字校验未通过（文档与目标代码不一致）", chars, 1)
 

@@ -28,6 +28,7 @@ from .api import (
     qtype_kind,
 )
 from .config import Config
+from .humantype import HumanStopped
 from .solver.base import Solver, SolverError
 
 
@@ -680,13 +681,20 @@ class Runner:
                         self._abandon_session(session_id, reason="停止：模拟思考等待中未作答")
                     return outcome
             self.log(
-                "  🧑‍💻 浏览器作答：逐字符输入（模拟真人）"
+                "  🧑‍💻 浏览器作答：逐字符输入（模拟真人，后台可跑、不要求 Chrome 置前）"
                 + ("+ 真实点击提交" if will_submit else "（本题按设置不提交）")
             )
             try:
                 result = self.human.answer(
-                    session_id, code, dry_run=run_config.human_dry_run or not will_submit
+                    session_id, code, dry_run=run_config.human_dry_run or not will_submit,
+                    should_stop=self.should_stop,
                 )
+            except HumanStopped:
+                outcome.detail = "已停止（打字过程中被中断，未提交）"
+                self.log("  ⏹ 收到停止信号，本题中断")
+                if run_config.cleanup_abandoned:
+                    self._abandon_session(session_id, reason="停止：打字中断")
+                return outcome
             except Exception as exc:  # noqa: BLE001 - 浏览器问题不该把整个流程炸掉
                 outcome.detail = f"浏览器输入失败：{type(exc).__name__}: {exc}"
                 self.log(f"  ✗ {outcome.detail}")

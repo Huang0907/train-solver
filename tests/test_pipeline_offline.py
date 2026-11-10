@@ -375,6 +375,28 @@ class WhitelistHintTest(unittest.TestCase):
                               config, log=lambda *_: None)
 
 
+class HumanStoppedTest(unittest.TestCase):
+    """打字途中按「停止」：本轮流立即中断，不提交（0.6.5）。"""
+
+    def test_stop_marks_outcome_stopped(self):
+        from trainsolve.humantype import HumanStopped
+
+        class StoppingHuman:
+            def answer(self, session_id, code, dry_run=False, should_stop=None):
+                raise HumanStopped("已按「停止」中断打字")
+
+        config = make_config(tempfile.mkdtemp())
+        config.run.sleep_between = 0
+        config.run.human_input = True
+        client = FakeClient(live_record())
+        runner = Runner(client, StubSolver(ANSWERS), config, log=lambda *_: None,
+                        human=StoppingHuman())
+        outcome = runner.run_once(1, 1)
+        self.assertIn("已停止", outcome.detail)
+        self.assertFalse(outcome.ok)
+        self.assertEqual(client.submitted, 0)
+
+
 class HumanInDryRunTest(unittest.TestCase):
     """真人模式下 dry-run / submit=false 也要真的打字（0.6.4 修）。
 
@@ -389,7 +411,7 @@ class HumanInDryRunTest(unittest.TestCase):
         typed: list[bool] = []
 
         class FakeHuman:
-            def answer(self, session_id, code, dry_run=False):
+            def answer(self, session_id, code, dry_run=False, should_stop=None):
                 typed.append(bool(dry_run))
                 return HumanResult(ok=True, message="已输入并校验")
 
@@ -470,7 +492,7 @@ class HumanDelayTest(unittest.TestCase):
         from trainsolve.human import HumanResult
 
         class FakeHuman:
-            def answer(self, session_id, code, dry_run=False):
+            def answer(self, session_id, code, dry_run=False, should_stop=None):
                 typed.append(session_id)
                 return HumanResult(ok=True, message="已输入并提交")
 
