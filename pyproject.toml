@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trainsolve"
-version = "0.6.3"
+version = "0.6.4"
 description = "程序设计训练平台自动刷题工具（DeepSeek 可插拔；可选浏览器逐字符打字模式）"
 readme = "README.md"
 requires-python = ">=3.11"
