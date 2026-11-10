@@ -312,9 +312,10 @@ class StopDuringTypingTest(unittest.TestCase):
 
 
 class FocusTest(unittest.TestCase):
-    """焦点自愈：焦点不在编辑器时用 CDP 鼠标点回去，不依赖窗口是否在前台。"""
+    """焦点自愈：先纯 DOM 聚焦（不动光标），必要时才点鼠标并把光标送回文末（0.6.7）。"""
 
-    def test_ensure_focus_clicks_when_focus_is_elsewhere(self):
+    @staticmethod
+    def _io(focus_script):
         from trainsolve.human import CDPTyperIO
 
         sent: list[tuple[str, dict]] = []
@@ -324,22 +325,42 @@ class FocusTest(unittest.TestCase):
                 sent.append((method, payload or {}))
                 return {}
 
-        class FakePage:
-            pass
+        io = CDPTyperIO(object(), FakeCDP(), log=lambda *_: None)
+        state = {"focus": "other:BODY"}
 
-        io = CDPTyperIO(FakePage(), FakeCDP())
-        focus = {"text": "other:BODY"}
-        io.focus_info = lambda: focus["text"]  # type: ignore[method-assign]
+        def focus_info():
+            return state["focus"]
 
-        def evaluate(_expr):
-            focus["text"] = "editor:cm-content"
-            return {"x": 120.0, "y": 40.0}
+        def evaluate(expr):
+            if "getBoundingClientRect" in expr:      # 编辑器坐标 JS
+                state["focus"] = focus_script["after_click"]
+                return {"x": 120.0, "y": 40.0}
+            state["focus"] = focus_script["after_dom_focus"]
+            return True
 
-        io._evaluate = evaluate  # type: ignore[method-assign]
+        io.focus_info = focus_info            # type: ignore[method-assign]
+        io._evaluate = evaluate               # type: ignore[method-assign]
+        return io, state, sent
+
+    def test_dom_focus_alone_restores_focus_without_moving_caret(self):
+        io, state, sent = self._io({"after_dom_focus": "editor:cm-content",
+                                    "after_click": "editor:cm-content"})
         info = io.ensure_focus()
         self.assertTrue(info.startswith("editor:"))
-        self.assertEqual([m for m, _ in sent], ["Input.dispatchMouseEvent"] * 2)
-        self.assertEqual(sent[0][1]["button"], "left")
+        self.assertEqual(state["focus"], "editor:cm-content")
+        self.assertEqual(sent, [], "DOM 聚焦就够了，不该再点鼠标把光标带走")
+
+    def test_click_fallback_restores_caret_to_end(self):
+        io, state, sent = self._io({"after_dom_focus": "other:BODY",
+                                    "after_click": "editor:cm-content"})
+        info = io.ensure_focus()
+        self.assertTrue(info.startswith("editor:"))
+        methods = [m for m, _ in sent]
+        self.assertEqual(methods.count("Input.dispatchMouseEvent"), 2)
+        self.assertIn("Input.dispatchKeyEvent", methods, "点完必须发 Ctrl+End 把光标送回文末")
+        keydowns = [p for m, p in sent if m == "Input.dispatchKeyEvent" and p.get("type") == "keyDown"]
+        self.assertEqual([p["code"] for p in keydowns], ["ControlLeft", "End"])
+        self.assertEqual(keydowns[-1]["modifiers"], 2)   # Ctrl 位 = 2
 
     def test_ensure_focus_is_noop_when_already_focused(self):
         from trainsolve.human import CDPTyperIO
@@ -351,10 +372,46 @@ class FocusTest(unittest.TestCase):
                 sent.append(method)
                 return {}
 
-        io = CDPTyperIO(object(), FakeCDP())
+        io = CDPTyperIO(object(), FakeCDP(), log=lambda *_: None)
         io.focus_info = lambda: "editor:cm-content"  # type: ignore[method-assign]
         self.assertEqual(io.ensure_focus(), "editor:cm-content")
         self.assertEqual(sent, [])
+
+
+class NonAsciiTypingTest(unittest.TestCase):
+    """中文/全角字符没有物理键位：走 insertText，绝不编造 Key中/vk 20013（0.6.7）。"""
+
+    def test_key_info_refuses_non_ascii(self):
+        from trainsolve.human import _key_info
+
+        self.assertIsNone(_key_info("中"))
+        self.assertIsNone(_key_info("，"))
+        self.assertIsNone(_key_info("\u00a0"))
+        self.assertIsNotNone(_key_info("A"))
+        self.assertEqual(_key_info("A"), ("KeyA", 65, True))
+
+    def test_cdp_io_inserts_non_ascii_text(self):
+        from trainsolve.human import CDPTyperIO
+
+        sent: list[tuple[str, dict]] = []
+
+        class FakeCDP:
+            def send(self, method, payload=None):
+                sent.append((method, payload or {}))
+                return {}
+
+        io = CDPTyperIO(object(), FakeCDP(), log=lambda *_: None)
+        io.type_char("中")
+        self.assertEqual([m for m, _ in sent], ["Input.insertText"])
+        self.assertEqual(sent[0][1]["text"], "中")
+
+        sent.clear()
+        io.type_char("A")
+        keydowns = [p for m, p in sent if m == "Input.dispatchKeyEvent" and p.get("type") == "keyDown"]
+        letter = [p for p in keydowns if p.get("code") == "KeyA"]
+        self.assertEqual(len(letter), 1)
+        self.assertEqual(letter[0]["unmodifiedText"], "a", "Shift+A 的未修饰字符是小写 a")
+        self.assertEqual(letter[0]["modifiers"], 8, "大写字母必须按着 Shift")
 
 
 class HumanTyperTest(unittest.TestCase):

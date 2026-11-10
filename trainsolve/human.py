@@ -128,6 +128,15 @@ EDITOR_BOX_JS = """(() => {
 })()"""
 
 
+# 只做 DOM 聚焦、不动选区：恢复焦点不该顺手把光标挪走（0.6.7）。
+EDITOR_FOCUS_JS = """(() => {
+  const el = document.querySelector('.cm-content') || document.querySelector('.cm-editor');
+  if (!el) return false;
+  el.focus();
+  return true;
+})()"""
+
+
 class HumanError(RuntimeError):
     pass
 
@@ -159,6 +168,11 @@ class PlaywrightIO:
         self.page.click(EDITOR_SELECTOR, timeout=15000)
 
     def type_char(self, ch: str) -> None:
+        if not ch.isascii():
+            # 中文/全角字符没有对应的物理键：交给 insertText（等价于输入法上屏），
+            # 只算一次单字符插入，不会碰「>50 字符才算粘贴」的阈值（0.6.7）。
+            self.page.keyboard.insert_text(ch)
+            return
         if self.shift_symbols and ch in self.SHIFTED:
             self.page.keyboard.press(f"Shift+{self.SHIFTED[ch]}")
             return
@@ -211,8 +225,12 @@ _SPECIAL_KEYS = {
 
 
 def _key_info(ch: str) -> tuple[str, int, bool] | None:
-    """字符 → (code, 虚拟键码, 是否需要 Shift)。不认识就返回 None。"""
+    """字符 → (code, 虚拟键码, 是否需要 Shift)。不认识的（含非 ASCII）返回 None。"""
     if len(ch) != 1:
+        return None
+    # 只处理 ASCII：中文/全角字符没有对应的物理键，硬编出来就是 "Key中"+vk 20013
+    # 这种非法组合，平台记下的 keySequence 也就不像真人（0.6.7）。
+    if not ch.isascii():
         return None
     if ch.isalpha():
         upper = ch.upper()
@@ -278,7 +296,11 @@ class CDPKeyboard:
             self._shift(False)
 
         modifiers = _SHIFT_MASK if need_shift else 0
-        base = _SHIFT_PAIRS.get(ch, ch)
+        # unmodifiedText 必须是**没按修饰键**时那个字符：Shift+A 是 "a" 不是 "A"
+        if ch in _SHIFT_PAIRS:
+            base = _SHIFT_PAIRS[ch]
+        else:
+            base = ch.lower() if ch.isupper() else ch
         self._send({
             "type": "keyDown", "code": code, "key": ch, "text": ch, "unmodifiedText": base,
             "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk, "modifiers": modifiers,
@@ -314,6 +336,22 @@ class CDPKeyboard:
                         "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65, "modifiers": modifier})
             self._send({"type": "keyUp", "code": mod_code, "key": mod_code[:-4],
                         "windowsVirtualKeyCode": mod_vk, "nativeVirtualKeyCode": mod_vk})
+        elif key in ("Control+End", "Meta+End"):
+            self.release_all()
+            modifier = _CTRL_MASK if key.startswith("Control") else 4
+            mod_code = "ControlLeft" if key.startswith("Control") else "MetaLeft"
+            mod_vk = 17 if key.startswith("Control") else 91
+            self._send({"type": "keyDown", "code": mod_code, "key": mod_code[:-4],
+                        "windowsVirtualKeyCode": mod_vk, "nativeVirtualKeyCode": mod_vk,
+                        "modifiers": modifier})
+            self._send({"type": "keyDown", "code": "End", "key": "End",
+                        "windowsVirtualKeyCode": 35, "nativeVirtualKeyCode": 35,
+                        "modifiers": modifier})
+            self._send({"type": "keyUp", "code": "End", "key": "End",
+                        "windowsVirtualKeyCode": 35, "nativeVirtualKeyCode": 35,
+                        "modifiers": modifier})
+            self._send({"type": "keyUp", "code": mod_code, "key": mod_code[:-4],
+                        "windowsVirtualKeyCode": mod_vk, "nativeVirtualKeyCode": mod_vk})
         elif key in _SPECIAL_KEYS:
             self.release_all()
             code, vk = _SPECIAL_KEYS[key]
@@ -333,10 +371,11 @@ class CDPTyperIO:
     会读到期中间状态，进而让「对齐缩进/行内校正」误退格，把上一行和当前行拼在一起。
     """
 
-    def __init__(self, page, cdp_session) -> None:
+    def __init__(self, page, cdp_session, *, log: Callable[[str], None] = print) -> None:
         self.page = page
         self.cdp = cdp_session
         self.keyboard = CDPKeyboard(cdp_session)
+        self.log = log
 
     def _evaluate(self, expression: str):
         result = self.cdp.send("Runtime.evaluate", {
@@ -352,7 +391,14 @@ class CDPTyperIO:
         self.page.click(EDITOR_SELECTOR, timeout=15000)
 
     def type_char(self, ch: str) -> None:
+        if not ch.isascii() and len(ch) == 1:
+            self.insert_text(ch)
+            return
         self.keyboard.type_char(ch)
+
+    def insert_text(self, text: str) -> None:
+        """非 ASCII 单字符走 insertText：没有物理键位，但仍是「一次插入一个字」。"""
+        self.cdp.send("Input.insertText", {"text": text})
 
     def press(self, key: str) -> None:
         self.keyboard.press(key)
@@ -364,12 +410,24 @@ class CDPTyperIO:
         return str(self._evaluate(f"({FOCUS_JS})()"))
 
     def ensure_focus(self) -> str:
-        """焦点不在编辑器时，用页面内聚焦 + CDP 鼠标点一下把光标放回去。
+        """焦点不在编辑器时把焦点放回去，**并且不把光标带走**。
 
-        这两步都是 CDP 注入，**不要求 Chrome 窗口在前台**，也不会把窗口拽到前面。
+        分两级：先只做页面内 DOM 聚焦（不改选区）；只有 DOM 聚焦无效时才用
+        CDP 鼠标点一下——点完立刻 Ctrl+End 把光标送回文末，否则后面打的字
+        会插到点击位置（正文中间），整段代码就烂了（0.6.7）。
+
+        两级都是 CDP 注入，**不要求 Chrome 窗口在前台**，也不会把窗口拽到前面。
         """
         info = self.focus_info()
         if info.startswith("editor:"):
+            return info
+        try:
+            self._evaluate(EDITOR_FOCUS_JS)
+        except Exception:  # noqa: BLE001 - 聚焦失败按后续校验兜底
+            pass
+        info = self.focus_info()
+        if info.startswith("editor:"):
+            self.log("  焦点已恢复（DOM 聚焦，未移动光标）")
             return info
         try:
             box = self._evaluate(EDITOR_BOX_JS)
@@ -379,6 +437,9 @@ class CDPTyperIO:
                     self.cdp.send("Input.dispatchMouseEvent", {
                         "type": kind, "x": x, "y": y, "button": "left", "clickCount": 1,
                     })
+                # 点击让光标落到点上，必须送回文末：打字永远是「在文末追加」
+                self.keyboard.press("Control+End")
+                self.log("  焦点已恢复（鼠标点回，光标已移回文末）")
         except Exception:  # noqa: BLE001 - 聚焦失败按后续校验兜底
             pass
         return self.focus_info()
@@ -646,7 +707,8 @@ class HumanBrowser:
                 cdp_session = self._context.new_cdp_session(self.page)
             except Exception as exc:  # noqa: BLE001
                 self.log(f"  ⚠ 无法创建 CDP 会话（{exc}），退回 playwright 按键")
-        io = CDPTyperIO(self.page, cdp_session) if cdp_session else PlaywrightIO(self.page, shift_symbols=False)
+        io = (CDPTyperIO(self.page, cdp_session, log=self.log)
+              if cdp_session else PlaywrightIO(self.page, shift_symbols=False))
         typer = HumanTyper(io, self.profile, log=self.log, should_stop=should_stop)
         self.typer = typer
         expected_len = len(normalize_code(code))

@@ -348,6 +348,8 @@ class HumanTyper:
         previous = self._read()
         deadline = _time.monotonic() + timeout
         while _time.monotonic() < deadline:
+            if self.should_stop():
+                raise TypingStopped()
             self.sleep(interval)
             current = self._read()
             if current == previous:
@@ -381,6 +383,8 @@ class HumanTyper:
         step = 0
         fixed = False
         while step < max_steps:
+            if self.should_stop():
+                raise TypingStopped()
             got = self._settle().split("\n")[-1]
             if got.rstrip(" ") == want_cmp:
                 if fixed:
