@@ -2,7 +2,7 @@
 
 把「选题 → 写代码 → 自检 → 提交 → 等判分 → 按报错修改」这一整套重复劳动交给脚本。Windows 桌面版开箱即用，命令行版可脚本化，模型接 DeepSeek，可换任意 OpenAI 兼容网关。
 
-![version](https://img.shields.io/badge/version-0.5.8-blue)
+![version](https://img.shields.io/badge/version-0.5.9-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-lightgrey)
@@ -162,7 +162,7 @@ python -m trainsolve models --check   # 逐个发最小请求验证可用性
 | `--strict-verify` | 样例没还原出来也不提交 |
 | `--max-failures N` | 全自动下连续未满分的熔断阈值（默认 3） |
 
-> `--dry-run` 与 `--no-submit` 会把会话留在「未完成」；`choose-q` 成功就产生一条记录。收尾用 `cleanup` 清掉，否则到期会变成 0 分。
+> `--dry-run` 与 `--no-submit` 会把会话留在「未完成」；`choose-q` 成功就产生一条记录。收尾用 `cleanup` 清掉，否则到期会变成 0 分。0.5.9 起 dry-run 不再被当成失败：填了 `--count` 就会跑满数量，不会做完第 1 题就停。
 
 ## 工作流程
 
