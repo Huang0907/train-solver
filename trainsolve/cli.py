@@ -199,6 +199,8 @@ def _build_human(config: Config):
             typo_rate=config.run.typo_rate,
             cpm_min=float(config.run.typing_cpm_min or 0.0),
             cpm_max=float(config.run.typing_cpm_max or 0.0),
+            backspace_rate=float(config.run.backspace_rate or 0.0),
+            backspace_max=int(config.run.backspace_max or 1),
         ),
         log=print,
     )
@@ -228,6 +230,10 @@ def _add_human_args(parser) -> None:
                         help="每题作答前随机等待的下限（分钟，0~60），默认 0")
     parser.add_argument("--human-delay-max", type=float, default=None,
                         help="每题作答前随机等待的上限（分钟，0~60）；两个都为 0 = 不等待")
+    parser.add_argument("--backspace-rate", type=float, default=None,
+                        help="随机退格概率（0~0.3，每个字符后判定），默认 0.01；0 = 不退格")
+    parser.add_argument("--backspace-max", type=int, default=None,
+                        help="一次随机退格最多删几个字符（1~5），默认 2")
     parser.add_argument("--cdp-url", default=None, help="浏览器调试端口，默认 http://127.0.0.1:9333")
 
 
@@ -291,6 +297,10 @@ def _apply_human(config: Config, args) -> None:
             config.run.human_delay_max,
             config.run.human_delay_min,
         )
+    if getattr(args, "backspace_rate", None) is not None:
+        config.run.backspace_rate = max(0.0, min(0.3, float(args.backspace_rate)))
+    if getattr(args, "backspace_max", None) is not None:
+        config.run.backspace_max = max(1, min(5, int(args.backspace_max)))
     if getattr(args, "cdp_url", None):
         config.run.cdp_url = args.cdp_url
 

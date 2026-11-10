@@ -210,6 +210,8 @@ typing_cpm_max = {config.run.typing_cpm_max}
 typo_rate = {config.run.typo_rate}
 human_delay_min = {config.run.human_delay_min}
 human_delay_max = {config.run.human_delay_max}
+backspace_rate = {config.run.backspace_rate}
+backspace_max = {config.run.backspace_max}
 """
     path.write_text(text, encoding="utf-8")
     if log is not None:
@@ -916,6 +918,8 @@ class ClientApp(tk.Tk):
             typo_rate=cfg.run.typo_rate,
             cpm_min=float(cfg.run.typing_cpm_min or 0.0),
             cpm_max=float(cfg.run.typing_cpm_max or 0.0),
+            backspace_rate=float(cfg.run.backspace_rate or 0.0),
+            backspace_max=int(cfg.run.backspace_max or 1),
         )
         browser = HumanBrowser(
             cfg.platform.base_url,
@@ -1435,6 +1439,19 @@ class SettingsDialog(tk.Toplevel):
         ttk.Label(delay_row, text="分钟（0 = 不等待；每题在区间内随机，可被「停止」打断）",
                   foreground="#777").pack(side="left", padx=(6, 0))
 
+        bs_row = ttk.Frame(human_frame)
+        bs_row.grid(row=6, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
+        ttk.Label(bs_row, text="随机退格").pack(side="left")
+        self.var_bs_rate = tk.DoubleVar(value=cfg.run.backspace_rate)
+        ttk.Spinbox(bs_row, from_=0, to=0.3, increment=0.005,
+                    textvariable=self.var_bs_rate, width=6).pack(side="left", padx=4)
+        ttk.Label(bs_row, text="概率，每次最多删").pack(side="left", padx=(4, 0))
+        self.var_bs_max = tk.IntVar(value=cfg.run.backspace_max)
+        ttk.Spinbox(bs_row, from_=1, to=5, increment=1,
+                    textvariable=self.var_bs_max, width=4).pack(side="left", padx=4)
+        ttk.Label(bs_row, text="字符再补回（0 = 不退格）", foreground="#777").pack(
+            side="left", padx=(4, 0))
+
         ttk.Label(frame, text="题目类型过滤").grid(row=9, column=0, sticky="w", pady=4)
         preset = next(
             (name for name, values in QTYPE_PRESETS if list(cfg.run.qtypes) == values),
@@ -1531,6 +1548,8 @@ class SettingsDialog(tk.Toplevel):
             delay_min, delay_max = delay_max, delay_min
         cfg.run.human_delay_min = delay_min
         cfg.run.human_delay_max = delay_max
+        cfg.run.backspace_rate = min(0.3, max(0.0, float(self.var_bs_rate.get() or 0)))
+        cfg.run.backspace_max = min(5, max(1, int(self.var_bs_max.get() or 1)))
         cfg.run.cdp_url = self.var_cdp.get().strip() or cfg.run.cdp_url
         cfg.run.auto_cleanup = bool(self.var_auto_clean.get())
         cfg.run.auto_cleanup_all = bool(self.var_auto_clean_all.get())

@@ -66,6 +66,10 @@ class TypingProfile:
     think_pause_rate: float = 0.12     # 行末触发"思考停顿"的概率
     think_pause: tuple[float, float] = (0.4, 1.4)
     typo_rate: float = 0.02            # 打错概率（打错后立即退格）
+    # 随机退格：每打完一个字符按该概率删掉刚打的 1..backspace_max 个字符再补回来。
+    # 和 typo_rate 不同，它不插入错字，只是"回头改一下"，用来打断匀速机器流。
+    backspace_rate: float = 0.01
+    backspace_max: int = 2
     burst_rate: float = 0.15           # 小段连打概率
     burst_len: tuple[int, int] = (2, 5)
     burst_delay: float = 0.03
@@ -160,6 +164,12 @@ class TimingModel:
     def typo_char(self) -> str:
         return self.rng.choice("abcdefghijklmnopqrstuvwxyz0123456789;,(){}")
 
+    def should_backspace(self) -> bool:
+        return self.rng.random() < self.profile.backspace_rate
+
+    def backspace_count(self) -> int:
+        return self.rng.randint(1, max(1, int(self.profile.backspace_max)))
+
 
 # ---------------------------------------------------------------- 文本处理
 
@@ -242,8 +252,13 @@ class HumanTyper:
         return self.timing.burst()
 
     def _type_body(self, text: str, *, allow_typos: bool = False) -> None:
-        """逐字符打一段内容（不含换行），保留抖动 / 连打 / 偶发打错再退格。"""
+        """逐字符打一段内容（不含换行），保留抖动 / 连打 / 偶发打错再退格。
+
+        另有「随机退格」：按概率删掉刚打的 1..N 个字符再原样补回，
+        内容不变，只是多几次真实按键与回读前的停顿，像人回头改一下。
+        """
         burst_left = 0
+        typed = 0
         for ch in text:
             burst_left = self._pause_char(burst_left)
             if allow_typos and self.timing.should_typo():
@@ -251,6 +266,15 @@ class HumanTyper:
                 self.sleep(self.timing.char_delay())
                 self.io.press("Backspace")
             self.io.type_char(ch)
+            typed += 1
+            if allow_typos and typed >= 2 and self.timing.should_backspace():
+                count = min(self.timing.backspace_count(), typed)
+                for _ in range(count):
+                    self.io.press("Backspace")
+                    self.sleep(self.timing.char_delay())
+                for fix_ch in text[typed - count:typed]:
+                    self.io.type_char(fix_ch)
+                    self.sleep(self.timing.char_delay())
 
     # -------------------------------------------------------- 自动缩进 / 行内校正
 

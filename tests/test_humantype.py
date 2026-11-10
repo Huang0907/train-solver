@@ -274,9 +274,38 @@ class HumanTyperTest(unittest.TestCase):
 
     def test_zero_typo_rate_has_no_backspace(self):
         io = FakeIO()
-        typer, _ = make_typer(io, typo_rate=0.0)
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
         typer.type_and_verify(CODE)
         self.assertEqual(io.backspaces(), 0)
+
+    def test_random_backspace_deletes_then_retypes(self):
+        """随机退格：删掉刚打的字符再原样补回，文档最终必须完全一致。"""
+        io = FakeIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=1.0, backspace_max=2)
+        ok = typer.type_and_verify(CODE, rounds=1)
+        self.assertTrue(ok)
+        self.assertEqual(normalize_code(io.doc), normalize_code(CODE))
+        self.assertGreater(io.backspaces(), 0)
+        self.assertEqual(io.max_single_insert(), 1)
+
+    def test_random_backspace_never_eats_previous_line(self):
+        """退格只能落在本段已打出来的字符里，不能越过行首把上一行拆掉。"""
+        io = FakeIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=1.0, backspace_max=5)
+        typer.type_code("int a = 1;\n", allow_typos=True)
+        self.assertEqual(io.read_doc(), "int a = 1;\n")
+
+    def test_zero_backspace_rate_has_no_random_backspace(self):
+        io = FakeIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        typer.type_and_verify(CODE)
+        self.assertEqual(io.backspaces(), 0)
+
+    def test_backspace_count_respects_max(self):
+        typer, _ = make_typer(FakeIO(), backspace_max=3)
+        draws = [typer.timing.backspace_count() for _ in range(60)]
+        self.assertTrue(all(1 <= n <= 3 for n in draws), draws[:8])
+        self.assertEqual(set(draws), {1, 2, 3})
 
     def test_repairs_lost_keystroke_inline(self):
         """丢键由行内校正兜住，不该整篇重打。"""

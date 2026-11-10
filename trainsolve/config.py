@@ -236,6 +236,9 @@ class RunConfig:
     # 每题独立在 [human_delay_min, human_delay_max] 内均匀取一个值；两个都 0 = 不等待。
     human_delay_min: float = 0.0
     human_delay_max: float = 0.0
+    # 随机退格：每个字符后按概率删掉刚打的 1..backspace_max 个字符再补回（不插错字）
+    backspace_rate: float = 0.01
+    backspace_max: int = 2
 
 
 @dataclass
@@ -293,6 +296,7 @@ def load_config_with_source(
             "human_input", "human_dry_run", "cdp_url",
             "typing_cpm", "typing_cpm_min", "typing_cpm_max", "typo_rate",
             "human_delay_min", "human_delay_max",
+            "backspace_rate", "backspace_max",
         })
         config.source = resolved.path
 
