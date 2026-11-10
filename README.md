@@ -2,7 +2,7 @@
 
 把「选题 → 写代码 → 自检 → 提交 → 等判分 → 按报错修改」这一整套重复劳动交给脚本。Windows 桌面版开箱即用，命令行版可脚本化，模型接 DeepSeek，可换任意 OpenAI 兼容网关。
 
-![version](https://img.shields.io/badge/version-0.5.9-blue)
+![version](https://img.shields.io/badge/version-0.6.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-lightgrey)
@@ -295,6 +295,23 @@ python -m trainsolve run --count 1 --human --backspace-rate 0.03 --backspace-max
 关键实现：每字符一条原生按键（`Input.dispatchKeyEvent`，Shift 符号单独按下）；逐行回读对齐缩进；回读与按键共用同一 CDP 会话且连续两次一致才采信；提交前必须等到 `post-answer` 的 **HTTP 2xx + 业务 code=0 回执**（只等请求体不够，平台组件状态在响应回调里才更新）。
 
 限制：只覆盖编程题；50 行约 1.5–3 分钟（倒计时仍在走）；依赖平台前端结构（选择器集中在 `trainsolve/human.py` 顶部）；需要真实 Chrome。详见 [docs/评估-模拟人类输入.md](docs/评估-模拟人类输入.md)。
+
+## 版本历史
+
+| 版本 | 主要变更 |
+|---|---|
+| **0.6.0**（2026-11-10） | 模拟输入两项：每题**随机思考时间**（`human_delay_min`~`human_delay_max`，0–60 分钟区间内独立取值，等待中「停止」可立即中断）；打字**随机退格**（`backspace_rate`/`backspace_max`，只删本行刚打的字符再原样补回）。 |
+| **0.5.9**（2026-11-10） | 修 dry-run 只做 1 题（未提交不再计为失败，填数量跑满）；设置新增「遇到未满分也继续」（= `--keep-going`）。 |
+| **0.5.8**（2026-11-09） | 仓库开源（MIT）；README 重写；构建扫描器不再硬编码真实学号 / Key 前缀，改从本机 `config.toml` 读。无运行时变更。 |
+| **0.5.7**（2026-11-09） | `runner.py` 行尾统一为 LF（跨平台编辑不再产生伪 diff）。无运行时变更。 |
+| **0.5.6**（2026-11-08） | 关窗时取消所有 `after()` 定时器（避免窗口销毁后回调打到已销毁控件）；只读冒烟 `--self-test` 纳入回归。 |
+| **0.5.5**（2026-11-08） | 真提交事故修复：`auto_fix_from_judge` 默认关闭（平台「重答」会撤销已提交成绩）；每次提交落 `submit_N.json`；记录状态优先于业务码，`submit` 只发一次。平台复测 12/12。 |
+| **0.5.4**（2026-11-06） | 交付面收窄为 public（full 版本取消）；抽题候选顺序固定；该版真提交实测暴露「判 0 后自动重答、成绩被撤销」的问题。 |
+| **0.5.3**（2026-11-05） | 配置来源解析（R1→R4）：启动第一行打印「读的是哪份配置、安全开关是什么」；当前工作目录不再参与配置查找。 |
+| **0.5.2** | 配置查找把工作目录也算进去，从仓库根启动会读到并静默改写仓库里的 `config.toml`；0.5.3 修复并加了来源日志。 |
+| **0.5.1** | 声明 Per-Monitor V2 DPI 感知（150% 缩放下文字清晰，未覆盖档位见「已知限制」）。 |
+| **0.5.0** | 首个功能完整的公开包：内置「模拟真人打字」、启动自动清理残留、提交前自检与「什么时候不会自动提交」说明。 |
+| **0.3.0** | 早期公开包，只保留发布 zip（无变更记录）。 |
 
 ## 隐私与安全
 

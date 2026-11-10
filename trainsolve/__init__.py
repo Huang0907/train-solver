@@ -4,4 +4,4 @@
 （GUI 勾选或 `--human`）用 Playwright 的 connect_over_cdp 驱动本机 Chrome。
 """
 
-__version__ = "0.5.9"
+__version__ = "0.6.0"
