@@ -2,7 +2,7 @@
 
 把「选题 → 写代码 → 自检 → 提交 → 等判分 → 按报错修改」这一整套重复劳动交给脚本。Windows 桌面版开箱即用，命令行版可脚本化，模型接 DeepSeek，可换任意 OpenAI 兼容网关。
 
-![version](https://img.shields.io/badge/version-0.6.2-blue)
+![version](https://img.shields.io/badge/version-0.6.3-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-lightgrey)
@@ -302,6 +302,7 @@ python -m trainsolve run --count 1 --human --backspace-rate 0.03 --backspace-max
 
 | 版本 | 主要变更 |
 |---|---|
+| **0.6.3**（2026-11-10） | 默认模型入口统一为官方 `deepseek-flash @ https://api.deepseek.com`：设置里的「模型」下拉框只列官方 id 且 flash 在第一位，去掉旧网关 `cn:` 选项；`--model` 帮助文字同步（原先还写着 deepseek-chat）。配置默认值本来就是官方 flash，无迁移。 |
 | **0.6.2**（2026-11-10） | 诊断向：指定标签却抽到被排除的题型时，日志点名标签与题型，并在连续两次跳过后自动停（不再白烧抽题配额）；主界面常驻一行「试运行 / 不提交 / 真提交」，勾选框文案不再声称会提交。 |
 | **0.6.1**（2026-11-10） | 随机思考时间区间可在设置里随时改（两个输入框，0–60，写反自动交换）；启动日志新增「节奏」一行，打印本题实际的思考区间与退格参数；架构图更新到当前模块（打字引擎标注随机退格）。 |
 | **0.6.0**（2026-11-10） | 模拟输入两项：每题**随机思考时间**（`human_delay_min`~`human_delay_max`，0–60 分钟区间内独立取值，等待中「停止」可立即中断）；打字**随机退格**（`backspace_rate`/`backspace_max`，只删本行刚打的字符再原样补回）。 |
