@@ -331,6 +331,50 @@ class AutoLoopTest(unittest.TestCase):
         self.assertEqual(len(outcomes), 3)
 
 
+class WhitelistHintTest(unittest.TestCase):
+    """指定标签却抽到被排除的题型：要给出可操作的提示，并尽快停下。"""
+
+    def _record_with_qtype(self, qtype: int) -> dict:
+        record = live_record()
+        record["paper"]["questions"][0]["qType"] = qtype
+        return record
+
+    def test_fixed_tag_explains_why_it_skips(self):
+        config = make_config(tempfile.mkdtemp())
+        config.run.qtypes = [5, 6, 7]
+        config.run.tag_id = 110
+        logs: list[str] = []
+        runner = Runner(FakeClient(self._record_with_qtype(9)), StubSolver(ANSWERS), config,
+                        log=logs.append)
+        outcome = runner.run_once(1, 1)
+        self.assertTrue(outcome.skipped)
+        joined = "\n".join(logs)
+        self.assertIn("你指定了标签 110", joined)
+        self.assertIn("不限制", joined)
+
+    def test_fixed_tag_stops_after_two_whitelist_skips(self):
+        script = [skipped_outcome(), skipped_outcome(), skipped_outcome()]
+        runner = self._loop_runner(script, tag_id=110, max_consecutive_skips=5)
+        outcomes = runner.run()
+        self.assertEqual(outcomes, [])
+        self.assertEqual(runner.calls, 2, "第二次跳过后就该停，别再烧配额")
+
+    def test_random_tag_keeps_the_configured_skip_budget(self):
+        script = [skipped_outcome() for _ in range(6)]
+        runner = self._loop_runner(script, tag_id=-1, max_consecutive_skips=3)
+        runner.run()
+        self.assertEqual(runner.calls, 3)
+
+    def _loop_runner(self, script, *, tag_id: int, max_consecutive_skips: int):
+        config = make_config(tempfile.mkdtemp())
+        config.run.sleep_between = 0
+        config.run.stop_on_failure = True
+        config.run.tag_id = tag_id
+        config.run.max_consecutive_skips = max_consecutive_skips
+        return ScriptedRunner(script, FakeClient(live_record()), StubSolver(ANSWERS),
+                              config, log=lambda *_: None)
+
+
 class HumanDelayTest(unittest.TestCase):
     """模拟思考时间：每题在区间内随机等待，可被「停止」中断。"""
 

@@ -562,6 +562,12 @@ class Runner:
             got = [int(question.get("qType") or 0) for question in questions]
             if any(item not in allowed for item in got):
                 self.log(f"  抽到题型 {sorted(set(got))}，不在白名单 {sorted(allowed)} 内 → 跳过")
+                if run_config.tag_id is not None and run_config.tag_id >= 0:
+                    # 指定了标签还抽到被排除的题型：这个标签下的题就是这样，再抽也是白烧配额
+                    self.log(
+                        f"  ⚠ 你指定了标签 {run_config.tag_id}，它给的题型就是 {sorted(set(got) - allowed)}；"
+                        "要么把「题型」改成「不限制（含改错题、程序填空）」，要么换个标签"
+                    )
                 try:
                     self.client.skip_this(session_id)
                     self.log("  已调用 skip-this（该记录标记为「跳过」）")
@@ -921,8 +927,19 @@ class Runner:
             if outcome.skipped:
                 skips += 1
                 self.log(f"↷ 跳过：{outcome.detail}（自动抽下一题）")
+                if (run_config.tag_id is not None and run_config.tag_id >= 0
+                        and skips >= 2):
+                    # 指定标签还连续抽到被排除的题型：再抽只会多烧一次配额 + 限流
+                    self.log(
+                        f"⚠ 指定标签 {run_config.tag_id} 连续 {skips} 次抽到被排除的题型，先停下："
+                        "把「题型」改成「不限制」或换标签再跑。"
+                    )
+                    break
                 if skips >= run_config.max_consecutive_skips:
-                    self.log(f"⚠ 连续跳过 {skips} 次，可能白名单挡掉了大部分题，停止。")
+                    self.log(
+                        f"⚠ 连续跳过 {skips} 次，可能白名单挡掉了大部分题（当前白名单 "
+                        f"{sorted(int(i) for i in (run_config.qtypes or []))}），停止。"
+                    )
                     break
                 continue
             skips = 0

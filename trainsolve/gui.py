@@ -489,6 +489,11 @@ class ClientApp(tk.Tk):
                                    # 否则 150% 下同样 236px 只装得下一半的字，换行点会变。
                                    wraplength=self._pad(236), justify="left")
         self.lbl_human.pack(anchor="w", padx=self._pad(8))
+        # 0.6.2：把「到底会不会真提交」直接写在界面上——发布包默认 dry_run=true，
+        # 勾了「模拟真人打字提交」却只在本地解题，是实测里最容易误解的一处。
+        self.lbl_submit_mode = ttk.Label(left, text="", foreground="#777", justify="left",
+                                         wraplength=self._pad(236))
+        self.lbl_submit_mode.pack(anchor="w", padx=self._pad(8), pady=(self._pad(2), 0))
 
         ttk.Separator(left).pack(fill="x", pady=self._pad(10), padx=self._pad(8))
 
@@ -692,12 +697,29 @@ class ClientApp(tk.Tk):
         on = bool(self.var_human.get())
         cfg = self.config_data
         text = (
-            f"已开启：基准 {int(cfg.run.typing_cpm)} 字符/分，每次作答随机浮动，逐字符打字后真实点击提交"
-            + ("（dry-run：只打字不提交）" if cfg.run.human_dry_run else "")
+            f"已开启：基准 {int(cfg.run.typing_cpm)} 字符/分，每次作答随机浮动，逐字符打字"
+            + ("后真实点击提交" if self._really_submits() else "（当前不会提交）")
             if on
             else "勾选后：在浏览器里逐字符输入，再点提交"
         )
         self.lbl_human.configure(text=text, foreground="#1a7f37" if on else "#777")
+        self._refresh_submit_mode()
+
+    def _really_submits(self) -> bool:
+        """这次运行到底会不会真提交：dry_run 或 submit=false 都不会。"""
+        cfg = self.config_data
+        return bool(cfg.run.submit) and not bool(cfg.run.dry_run)
+
+    def _refresh_submit_mode(self) -> None:
+        """主界面常驻一行：试运行 / 不提交 / 真提交。"""
+        cfg = self.config_data
+        if cfg.run.dry_run:
+            text, color = "当前：试运行（dry_run=true），只解题不提交", "#b26a00"
+        elif not cfg.run.submit:
+            text, color = "当前：不提交（submit=false），只解题", "#b26a00"
+        else:
+            text, color = "当前：真提交（每次提交消耗一次作答机会）", "#1a7f37"
+        self.lbl_submit_mode.configure(text=text, foreground=color)
 
     # ------------------------------------------------------------ 队列
 

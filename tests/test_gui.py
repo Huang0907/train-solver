@@ -627,6 +627,30 @@ class SettingsDialogTest(unittest.TestCase):
             app.stop_event.set()
             app.destroy()
 
+    def test_submit_mode_label_tracks_config(self):
+        """主界面必须直说「会不会真提交」——dry_run 默认开着最容易被误解。"""
+        app = gui.ClientApp()
+        app.withdraw()
+        try:
+            run = app.config_data.run
+            run.dry_run = True
+            run.submit = False
+            app._refresh_submit_mode()
+            self.assertIn("试运行", app.lbl_submit_mode.cget("text"))
+
+            run.dry_run = False
+            run.submit = False
+            app._refresh_submit_mode()
+            self.assertIn("不提交", app.lbl_submit_mode.cget("text"))
+
+            run.dry_run = False
+            run.submit = True
+            app._refresh_submit_mode()
+            self.assertIn("真提交", app.lbl_submit_mode.cget("text"))
+        finally:
+            app.stop_event.set()
+            app.destroy()
+
     def test_keep_going_settings_are_saved(self):
         """「遇到未满分也继续」勾选 = stop_on_failure 关，两个方向都要能存。"""
         app = gui.ClientApp()
