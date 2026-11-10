@@ -51,11 +51,11 @@ QTYPE_PRESETS = [
     ("编程类 5/6/7，排除改错题", [5, 6, 7]),
     ("不限制（含改错题、程序填空）", []),
 ]
-# 网关上的模型 id（默认 Deepseek-V4.1-Flash）
+# 官方（api.deepseek.com）可用的模型 id；第一位就是默认值。
+# 自建网关请在「模型名」里手填它自己的 id（例如 cn:xxx），不要从这里选。
 MODELS = [
-    "cn:deepseek-v4.1-flash",
-    "cn:deepseek-v4-pro",
-    "cn:auto",
+    "deepseek-flash",
+    "deepseek-v4-pro",
     "deepseek-chat",
     "deepseek-reasoner",
 ]
@@ -1186,7 +1186,7 @@ class ModelDialog(tk.Toplevel):
         ttk.Label(frame, text="模型名").grid(row=5, column=0, sticky="w", pady=2)
         self.var_model = tk.StringVar()
         ttk.Entry(frame, textvariable=self.var_model, width=64).grid(row=5, column=1, columnspan=2, sticky="w", pady=2)
-        ttk.Label(frame, text="官方：deepseek-flash / deepseek-v4-pro；本地网关：cn:deepseek-v4.1-flash",
+        ttk.Label(frame, text="官方默认 deepseek-flash（也可写 deepseek-v4-pro）；自建网关填它自己的模型 id",
                   foreground="#777").grid(row=6, column=1, columnspan=2, sticky="w")
 
         self.lbl_result = ttk.Label(frame, text="", foreground="#555", wraplength=560)

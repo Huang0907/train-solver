@@ -542,7 +542,7 @@ def _common_parent() -> argparse.ArgumentParser:
     parent.add_argument("--user", dest="username", default=argparse.SUPPRESS, help="学号")
     parent.add_argument("--password", dest="password", default=argparse.SUPPRESS, help="密码")
     parent.add_argument("--api-key", dest="api_key", default=argparse.SUPPRESS, help="DeepSeek API Key")
-    parent.add_argument("--model", dest="model", default=argparse.SUPPRESS, help="模型名，默认 deepseek-chat")
+    parent.add_argument("--model", dest="model", default=argparse.SUPPRESS, help="模型名，默认 deepseek-flash")
     parent.add_argument("--deepseek-base-url", dest="deepseek_base_url", default=argparse.SUPPRESS,
                         help="OpenAI 兼容网关地址")
     parent.add_argument("--solver", dest="solver", default=argparse.SUPPRESS, help="auto|deepseek|stub|prompt")

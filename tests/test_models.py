@@ -19,6 +19,32 @@ def make_config() -> Config:
     return config
 
 
+class DefaultModelTest(unittest.TestCase):
+    """默认就是 DeepSeek 官方 flash：配置默认值与界面下拉框的第一项必须是它。"""
+
+    def test_config_defaults_to_official_flash(self):
+        config = Config()
+        self.assertEqual(config.deepseek.model, "deepseek-flash")
+        self.assertEqual(config.deepseek.base_url.rstrip("/"), "https://api.deepseek.com")
+
+    def test_model_picker_lists_official_first(self):
+        from trainsolve.gui import MODELS
+
+        self.assertEqual(MODELS[0], "deepseek-flash")
+        self.assertIn("deepseek-v4-pro", MODELS)
+        self.assertFalse([m for m in MODELS if m.startswith("cn:")],
+                         "旧网关的 cn: id 不该再出现在默认列表里")
+
+    def test_shipped_configs_default_to_official_flash(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        for name in ("config.public.toml", "config.example.toml"):
+            text = (root / name).read_text(encoding="utf-8")
+            self.assertIn("https://api.deepseek.com", text, name)
+            self.assertIn('model = "deepseek-flash"', text, name)
+
+
 class EndpointsTest(unittest.TestCase):
     def test_default_order(self):
         config = make_config()
