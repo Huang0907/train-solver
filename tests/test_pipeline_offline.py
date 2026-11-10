@@ -394,7 +394,26 @@ class HumanStoppedTest(unittest.TestCase):
         outcome = runner.run_once(1, 1)
         self.assertIn("已停止", outcome.detail)
         self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.stopped, "停止的题必须标 stopped，不能被主循环记成未满分题（0.6.8）")
         self.assertEqual(client.submitted, 0)
+        self.assertTrue(client.skipped, "停止的题应清理会话，不留「未完成」")
+
+    def test_stop_during_thinking_delay_marks_stopped(self):
+        """模拟思考等待期间点停止：同样要标 stopped（0.6.8）。"""
+        config = make_config(tempfile.mkdtemp())
+        config.run.sleep_between = 0
+        config.run.human_input = True
+        config.run.human_delay_min = 5
+        config.run.human_delay_max = 5
+        client = FakeClient(live_record())
+        runner = Runner(client, StubSolver(ANSWERS), config, log=lambda *_: None, human=object())
+        # 抽题阶段不停止，只有「等待思考」这一步被打断
+        runner._sleep_unless_stopped = lambda seconds: True
+        outcome = runner.run_once(1, 1)
+        self.assertTrue(outcome.stopped)
+        self.assertIn("已停止", outcome.detail)
+        self.assertEqual(client.submitted, 0)
+        self.assertEqual(client.posted, [], "等待中停止不该暂存答案")
 
 
 class HumanInDryRunTest(unittest.TestCase):

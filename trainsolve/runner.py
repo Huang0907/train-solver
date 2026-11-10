@@ -722,11 +722,10 @@ class Runner:
                     f"（区间 {run_config.human_delay_min:g}–{run_config.human_delay_max:g} 分钟）"
                 )
                 if self._sleep_unless_stopped(delay):
-                    outcome.detail = "已停止（模拟思考等待中被中断，未作答）"
-                    self.log("  ⏹ 随机等待期间收到停止，本题不提交")
-                    if run_config.cleanup_abandoned:
-                        self._abandon_session(session_id, reason="停止：模拟思考等待中未作答")
-                    return outcome
+                    return self._halted(
+                        outcome, "已停止（模拟思考等待中被中断，未作答）",
+                        session_id=session_id, cleanup_reason="停止：模拟思考等待中未作答",
+                    )
             self.log(
                 "  🧑‍💻 浏览器作答：逐字符输入（模拟真人，后台可跑、不要求 Chrome 置前）"
                 + ("+ 真实点击提交" if will_submit else "（本题按设置不提交）")
@@ -737,11 +736,11 @@ class Runner:
                     should_stop=self.should_stop,
                 )
             except HumanStopped:
-                outcome.detail = "已停止（打字过程中被中断，未提交）"
-                self.log("  ⏹ 收到停止信号，本题中断")
-                if run_config.cleanup_abandoned:
-                    self._abandon_session(session_id, reason="停止：打字中断")
-                return outcome
+                # 走统一收尾：stopped=True 才不会被主循环记成「一道未满分题」（0.6.8）
+                return self._halted(
+                    outcome, "已停止（打字过程中被中断，未提交）",
+                    session_id=session_id, cleanup_reason="停止：打字中断",
+                )
             except Exception as exc:  # noqa: BLE001 - 浏览器问题不该把整个流程炸掉
                 outcome.detail = f"浏览器输入失败：{type(exc).__name__}: {exc}"
                 self.log(f"  ✗ {outcome.detail}")

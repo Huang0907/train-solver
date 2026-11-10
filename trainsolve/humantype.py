@@ -199,6 +199,10 @@ def describe_human_pacing(run) -> str:
     if rate > 0:
         count = max(1, min(5, int(getattr(run, "backspace_max", 2) or 1)))
         parts.append(f"随机退格 {rate:g} / 每次最多 {count} 字符")
+    typo = max(0.0, min(0.5, float(getattr(run, "typo_rate", 0.0) or 0.0)))
+    if typo > 0:
+        # 错字率以前只在设置里能改、日志里完全看不到，等于静默生效（0.6.8）
+        parts.append(f"错字 {typo:g}")
     return "；".join(parts)
 
 
@@ -519,7 +523,7 @@ class HumanTyper:
             if self.verify(expected):
                 self.log(
                     f"  ✓ 文档一致（{len(expected.splitlines())} 行 / {len(expected)} 字符）"
-                    f"，缩进对齐 {self.indent_fixes} 次 / 行内修复 {self.line_repairs} 次 / 第 {attempt} 轮"
+                    f"，缩进对齐 {self.indent_fixes} 次 / 丢键补打 {self.line_repairs} 次 / 第 {attempt} 轮"
                 )
                 return True
         return False

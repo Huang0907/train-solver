@@ -1214,6 +1214,10 @@ class ClientApp(tk.Tk):
         self.set_status("已请求停止…")
 
     def on_settings(self) -> None:
+        # 主界面手输的速度/思考值必须先进 cfg：Spinbox 只有点上下箭头才触发 command，
+        # 手输后直接开设置页，设置页读到的还是旧值，保存一次就把手输值回滚了（0.6.8）。
+        self._apply_pacing()
+        self._on_human_toggle()
         SettingsDialog(self)
 
 

@@ -880,6 +880,7 @@ class HumanBrowser:
         since: int,
         net_since: int = 0,
         timeout: float = 18.0,
+        should_stop=None,
     ) -> bool | None:
         """等前端把当前代码**暂存成功**，并校验一致。
 
@@ -898,6 +899,10 @@ class HumanBrowser:
         last_rejection: int | None = None
         pending_logged = False
         while time.time() < deadline:
+            if should_stop is not None and should_stop():
+                # 同步窗口最多 18+10 秒：点「停止」不能等到这里才生效（0.6.8）
+                self.log("  已请求停止：不再等前端同步，也不提交")
+                return None
             pending = False
             for entry in self._sync_candidates(since=since, net_since=net_since):
                 body_code = _code_from_body(entry.get("body"))
@@ -1031,15 +1036,20 @@ class HumanBrowser:
         # 提交前必须确认前端已经把当前代码同步出去（否则平台收到的是旧快照）
         self.log("  等前端把代码同步上去…")
         self.nudge_editor()
-        verdict = self.wait_app_code(code, since=mark, net_since=net_mark, timeout=18.0)
+        verdict = self.wait_app_code(code, since=mark, net_since=net_mark, timeout=18.0,
+                                     should_stop=should_stop)
         if verdict is False:
             self.log("  ⚠ App 侧还是旧快照，再触发一次编辑并等待…")
             self.nudge_editor()
-            verdict = self.wait_app_code(code, since=mark, net_since=net_mark, timeout=10.0)
+            verdict = self.wait_app_code(code, since=mark, net_since=net_mark, timeout=10.0,
+                                         should_stop=should_stop)
         if verdict is False:
             return HumanResult(False, "前端组件里的代码没同步完整，已放弃提交（避免白交一次）", chars, 1)
 
         if dry_run:
             return HumanResult(True, f"已输入 {chars} 字符并校验通过（dry-run，未提交）", chars, 1)
+        # 提交前的最后一道闸：同步窗口里点了停止，就一次 submit 都不许发（0.6.8）
+        if should_stop is not None and should_stop():
+            raise HumanStopped("已按「停止」，提交前中断")
         self.submit()
         return HumanResult(True, f"已输入 {chars} 字符并提交", chars, 1)

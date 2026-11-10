@@ -155,6 +155,23 @@ class ClientAppTest(unittest.TestCase):
         tabs = [self.app.nb.tab(i, "text") for i in range(self.app.nb.index("end"))]
         self.assertEqual(tabs, ["日志", "题目", "代码", "评分"])
 
+    def test_settings_keeps_pacing_typed_on_main_page(self):
+        """主界面手输的速度，开设置页时不能丢（0.6.8）。
+
+        `ttk.Spinbox` 只有点上下箭头才触发 command：手输 300 再直接点「设置」，
+        设置页读到的还是旧值，保存一次就把 300 回滚掉。`on_settings` 必须先把
+        主界面值写进配置再开弹窗。
+        """
+        self.app.var_cpm_main.set("300")
+        self.app.var_delay_min_main.set("2")
+        self.app.var_delay_max_main.set("9")
+        with mock.patch.object(gui, "SettingsDialog") as dialog:
+            self.app.on_settings()
+        dialog.assert_called_once()
+        self.assertEqual(self.app.config_data.run.typing_cpm, 300.0)
+        self.assertEqual(self.app.config_data.run.human_delay_min, 2.0)
+        self.assertEqual(self.app.config_data.run.human_delay_max, 9.0)
+
     def test_code_tab_has_horizontal_scrollbar(self):
         """代码页 wrap="none"，必须配横向滚动条，否则长行行尾看不到。"""
         hbar = getattr(self.app, "_hbar_code", None)
