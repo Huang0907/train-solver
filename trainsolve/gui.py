@@ -911,7 +911,7 @@ class ClientApp(tk.Tk):
         if not cfg.run.human_input:
             return None
         from .human import HumanBrowser
-        from .humantype import TypingProfile
+        from .humantype import TypingProfile, describe_human_pacing
 
         profile = TypingProfile(
             cpm=cfg.run.typing_cpm,
@@ -937,9 +937,11 @@ class ClientApp(tk.Tk):
             self._close_human(browser)
             raise
         lo, hi = profile.speed_interval()
+        pacing = describe_human_pacing(cfg.run)
         self.log(
             f"✓ 浏览器就绪：基准 {int(cfg.run.typing_cpm)} 字符/分、"
             f"每次作答在 {lo:.0f}–{hi:.0f} 之间随机逐字符打字"
+            + (f"；{pacing}" if pacing else "")
             + ("（dry-run：只打字不提交）" if cfg.run.human_dry_run else "")
         )
         return browser

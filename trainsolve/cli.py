@@ -187,7 +187,7 @@ def _build_human(config: Config):
     if not config.run.human_input:
         return None
     from .human import HumanBrowser
-    from .humantype import TypingProfile
+    from .humantype import TypingProfile, describe_human_pacing
 
     browser = HumanBrowser(
         config.platform.base_url,
@@ -206,6 +206,9 @@ def _build_human(config: Config):
     )
     print("—" * 60)
     print("🧑‍💻 人工模拟输入已开启：作答走浏览器逐字符打字，取题/自检/评分仍走 API")
+    pacing = describe_human_pacing(config.run)
+    if pacing:
+        print(f"   节奏：{pacing}")
     if config.run.human_dry_run:
         print("   dry-run：只打字并校验，不会点提交")
     browser.start()

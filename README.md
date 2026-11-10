@@ -2,7 +2,7 @@
 
 把「选题 → 写代码 → 自检 → 提交 → 等判分 → 按报错修改」这一整套重复劳动交给脚本。Windows 桌面版开箱即用，命令行版可脚本化，模型接 DeepSeek，可换任意 OpenAI 兼容网关。
 
-![version](https://img.shields.io/badge/version-0.6.0-blue)
+![version](https://img.shields.io/badge/version-0.6.1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-lightgrey)
@@ -36,7 +36,7 @@
 
 ![TrainSolve 模块级架构](docs/architecture-detailed.png)
 
-本机进程内分四层：**入口层**（桌面客户端、设置 / 更换模型、命令行）、**配置与编排**（配置加载、Runner、校验码）、**适配层**（Solver、TrainClient、自检 Judge、真人打字、打字引擎）与 **产物目录**，每块都标了对应源码文件。桌面客户端与命令行调用同一个 Runner；Runner 通过 `TrainClient` 对接训练平台、通过 `solver/` 对接 DeepSeek、通过 `judge.py` 做编译与样例比对，每次会话的全部证据落到 `out/<sessionId>/`。训练平台与 DeepSeek 是仅有的两个外部系统，都在本机边界之外；`tag` 与白名单、提交语义、安全默认见上图卡片与下文。
+本机进程内分四层：**入口层**（桌面客户端、设置 / 更换模型、命令行）、**配置与编排**（配置加载、Runner、校验码）、**适配层**（Solver、TrainClient、自检 Judge、真人打字、打字引擎）与 **产物目录**，每块都标了对应源码文件；图下方四张卡片按同样的分层再汇总一遍。桌面客户端与命令行调用同一个 Runner；Runner 通过 `TrainClient` 对接训练平台、通过 `solver/` 对接 DeepSeek、通过 `judge.py` 做编译与样例比对，每次会话的全部证据落到 `out/<sessionId>/`。训练平台与 DeepSeek 是仅有的两个外部系统，都在本机边界之外；`tag` 与白名单、提交语义、安全默认见上图卡片与下文。
 
 ## 快速开始
 
@@ -282,7 +282,7 @@ powershell -ExecutionPolicy Bypass -File build_release.ps1
 - 桌面版勾选「模拟真人打字提交」即可（driver 已内置）；
 - 源码运行需 `pip install playwright`，Chrome 用 `--remote-debugging-port=9333` 启动（没开会自动拉起独立 profile）；
 - 第一次建议 `--human-dry-run`（只打字、回读校验，不点提交）；
-- 作答前可加一段**随机「思考时间」**：每题在 `--human-delay-min` ~ `--human-delay-max` 分钟区间内独立取一个值（0–60），期间按「停止」可立即中断且不提交。桌面版在设置 → 模拟人类输入里填同一对区间；
+- 作答前可加一段**随机「思考时间」**：每题在 `--human-delay-min` ~ `--human-delay-max` 分钟区间内独立取一个值（0–60），期间按「停止」可立即中断且不提交。桌面版在设置 → 模拟人类输入里填同一对区间，**随时可改**；启动日志会打印本轮的「节奏：每题随机思考 3–12 分钟；随机退格 0.01 / 每次最多 2 字符」，方便核对是否生效；
 - 打字过程中会**随机退格**：每字符按 `--backspace-rate`（默认 0.01）判定，删掉刚打的 1–`--backspace-max`（默认 2）个字符再原样补回——内容不变、不会越过行首，只是多几次真实按键，打断匀速机器流。桌面版同一节可调，填 0 关闭。
 
 ```powershell
@@ -300,6 +300,7 @@ python -m trainsolve run --count 1 --human --backspace-rate 0.03 --backspace-max
 
 | 版本 | 主要变更 |
 |---|---|
+| **0.6.1**（2026-11-10） | 随机思考时间区间可在设置里随时改（两个输入框，0–60，写反自动交换）；启动日志新增「节奏」一行，打印本题实际的思考区间与退格参数；架构图更新到当前模块（打字引擎标注随机退格）。 |
 | **0.6.0**（2026-11-10） | 模拟输入两项：每题**随机思考时间**（`human_delay_min`~`human_delay_max`，0–60 分钟区间内独立取值，等待中「停止」可立即中断）；打字**随机退格**（`backspace_rate`/`backspace_max`，只删本行刚打的字符再原样补回）。 |
 | **0.5.9**（2026-11-10） | 修 dry-run 只做 1 题（未提交不再计为失败，填数量跑满）；设置新增「遇到未满分也继续」（= `--keep-going`）。 |
 | **0.5.8**（2026-11-09） | 仓库开源（MIT）；README 重写；构建扫描器不再硬编码真实学号 / Key 前缀，改从本机 `config.toml` 读。无运行时变更。 |

@@ -174,6 +174,26 @@ class TimingModel:
 # ---------------------------------------------------------------- 文本处理
 
 
+def describe_human_pacing(run) -> str:
+    """把「随机思考 / 随机退格」配置压成一行启动提示；全关时返回空串。
+
+    只做展示，不参与判定：区间写反按交换后的顺序显示，便于用户核对设置
+    到底有没有生效（0.6.1 起浏览器就绪日志里带这一段）。
+    """
+    parts: list[str] = []
+    low = max(0.0, min(60.0, float(getattr(run, "human_delay_min", 0.0) or 0.0)))
+    high = max(0.0, min(60.0, float(getattr(run, "human_delay_max", 0.0) or 0.0)))
+    if low > high:
+        low, high = high, low
+    if high > 0:
+        parts.append(f"每题随机思考 {low:g}–{high:g} 分钟")
+    rate = max(0.0, min(0.3, float(getattr(run, "backspace_rate", 0.0) or 0.0)))
+    if rate > 0:
+        count = max(1, min(5, int(getattr(run, "backspace_max", 2) or 1)))
+        parts.append(f"随机退格 {rate:g} / 每次最多 {count} 字符")
+    return "；".join(parts)
+
+
 def normalize_code(text: str) -> str:
     """把两侧文本归一到可比较形态（NBSP→空格、去行尾空白、去尾部空行）。"""
     if text is None:

@@ -7,6 +7,7 @@ from trainsolve.humantype import (
     HumanTyper,
     TimingModel,
     TypingProfile,
+    describe_human_pacing,
     first_diff,
     normalize_code,
     prepare_for_typing,
@@ -240,6 +241,44 @@ class SpeedVariationTest(unittest.TestCase):
         self.assertTrue(typer.type_and_verify(CODE))
         self.assertTrue(any("本轮打字速度" in line for line in logs))
         self.assertGreater(typer.speed_cpm, 0.0)
+
+
+class PacingSummaryTest(unittest.TestCase):
+    """启动日志里的「节奏」一行：把随机思考时间与退格配置说清楚。"""
+
+    @staticmethod
+    def _run(**kwargs):
+        from types import SimpleNamespace
+
+        base = {
+            "human_delay_min": 0.0,
+            "human_delay_max": 0.0,
+            "backspace_rate": 0.0,
+            "backspace_max": 2,
+        }
+        base.update(kwargs)
+        return SimpleNamespace(**base)
+
+    def test_defaults_are_silent(self):
+        self.assertEqual(describe_human_pacing(self._run()), "")
+
+    def test_delay_range_is_reported(self):
+        text = describe_human_pacing(self._run(human_delay_min=3, human_delay_max=12))
+        self.assertIn("3–12 分钟", text)
+
+    def test_reversed_range_is_shown_in_order(self):
+        text = describe_human_pacing(self._run(human_delay_min=12, human_delay_max=3))
+        self.assertIn("3–12 分钟", text)
+
+    def test_backspace_is_reported(self):
+        text = describe_human_pacing(self._run(backspace_rate=0.01, backspace_max=2))
+        self.assertIn("随机退格 0.01 / 每次最多 2 字符", text)
+
+    def test_both_parts_are_joined(self):
+        text = describe_human_pacing(self._run(
+            human_delay_min=1, human_delay_max=2, backspace_rate=0.02, backspace_max=3))
+        self.assertIn("每题随机思考 1–2 分钟", text)
+        self.assertIn("随机退格 0.02 / 每次最多 3 字符", text)
 
 
 class HumanTyperTest(unittest.TestCase):
