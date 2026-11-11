@@ -12,11 +12,12 @@ def args(**kwargs) -> argparse.Namespace:
 
 
 class QTypesArgTest(unittest.TestCase):
-    def test_default_is_programming_pool(self):
+    def test_default_is_ordinary_programming_only(self):
+        """0.6.10 起默认只做普通编程题（5），6/7 改错类不再进默认池。"""
         config = Config()
         config.run.qbase_type = 4
         _apply_qtypes(config, args(qtypes=None))
-        self.assertEqual(config.run.qtypes, [5, 6, 7])
+        self.assertEqual(config.run.qtypes, [5])
 
     def test_explicit_single(self):
         config = Config()

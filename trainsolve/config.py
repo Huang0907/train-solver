@@ -208,7 +208,7 @@ class RunConfig:
     # 允许作答的题目 qType 白名单；空列表=不限制。
     # 默认只做「编程类」（5 普通编程 / 6 实验编程 / 7 复杂编程），排掉
     # 8、9 改错题、4 程序填空题、10 设计题——这些题型的提示词与判分方式都不一样。
-    qtypes: list[int] = field(default_factory=lambda: [5, 6, 7])
+    qtypes: list[int] = field(default_factory=lambda: [5])
     # 提交后若平台判分未满分：把平台给的失败用例/编译错误回灌给模型，修复后重答，
     # 一直循环到满分（或没有新的报错信息、代码不再变化）为止；这里是安全上限。
     #

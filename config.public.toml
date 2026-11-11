@@ -45,7 +45,7 @@ stop_on_failure = true
 allow_unverified_submit = false
 # 更严格：连「样例没还原出来、无法逐字节比对」的题也不提交
 require_verified = false
-qtypes = [5, 6, 7]
+qtypes = [5]
 # 未满分时自动重答（0.5.5 起默认 false）：重答会撤销刚才的提交、清空成绩，要开自己改 true
 auto_fix_from_judge = false
 max_reanswers = 5

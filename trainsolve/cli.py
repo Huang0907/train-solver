@@ -117,7 +117,11 @@ def cmd_tags(config: Config, args) -> int:
 
 
 def _apply_qtypes(config: Config, args) -> None:
-    """题型白名单：默认只做编程类（5/6/7），排掉改错题 8/9、程序填空 4、设计题 10。"""
+    """题型白名单：0.6.10 起默认**只做普通编程题（qType 5）**。
+
+    实验/复杂编程（6/7）、改错题（8/9）、程序填空（4）、设计题（10）都不在默认池里；
+    需要时用 `--qtypes 5,6,7` 或 `--qtypes all` 显式指定。
+    """
     raw = getattr(args, "qtypes", None)
     if raw:
         text = str(raw).strip()
@@ -130,7 +134,7 @@ def _apply_qtypes(config: Config, args) -> None:
                 raise SystemExit(f"--qtypes 需为逗号分隔的整数（如 5 或 5,6,7 或 all），收到：{raw}")
         return
     # 选了客观题型（0..3）时，默认白名单不适用，视为不限制
-    if config.run.qbase_type < 4 and config.run.qtypes == [5, 6, 7]:
+    if config.run.qbase_type < 4 and config.run.qtypes == [5]:
         config.run.qtypes = []
 
 
@@ -679,8 +683,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--strict-verify", action="store_true",
                      help="更严格：连「题面样例没还原出来、无法逐字节比对」的题也不提交（全自动容易卡住）")
     run.add_argument("--qtypes",
-                     help="允许作答的题目 qType 白名单，逗号分隔；默认 5,6,7（编程类，排除改错题/程序填空）；"
-                          "传 5 只做普通编程题，传 all 表示不限制")
+                     help="允许作答的题目 qType 白名单，逗号分隔；默认 5（只做普通编程题）；"
+                          "传 5,6,7 可带上实验/复杂编程，传 all 表示不限制")
     run.add_argument("--max-reanswers", type=int, default=None, metavar="N",
                      help="提交后未满分时，按平台报错修复并重答的次数上限（默认 5，即一直改到通过为止；0 表示不重答）")
     run.add_argument("--no-auto-fix", action="store_true",
