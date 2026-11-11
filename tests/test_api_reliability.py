@@ -268,5 +268,50 @@ class RunnerReloginWiringTest(unittest.TestCase):
         self.assertEqual(client.enabled, ["2026000000"], "复用缓存 sid 时也要装钩子，否则中途失效没救")
 
 
+class PostNoBodyVariantTest(unittest.TestCase):
+    """请求体形态必须按端点分别缓存（0.6.10 审计）。
+
+    submit 探到 b"null" 后被全局复用，会让「同进程里先提交再重答」拿到 400，
+    而新进程直接重答却能成功——同一操作因调用顺序不同而结果不同。
+    """
+
+    class _Client(TrainClient):
+        ACCEPT = {
+            "api/student/submit": (b"null",),
+            "api/student/reanswer": (b"{}",),
+        }
+
+        def __init__(self):
+            super().__init__("http://example.invalid/", log=lambda *_: None)
+            self.calls: list[tuple[str, bytes | None]] = []
+
+        def _open(self, request, *, idempotent=True):
+            from urllib.parse import urlparse
+
+            path = urlparse(request.full_url).path.strip("/")
+            self.calls.append((path, request.data))
+            if request.data in self.ACCEPT.get(path, ()):
+                return 200, b'{"code":0}'
+            return 400, b'{"code":400}'
+
+    def test_variant_is_cached_per_endpoint(self):
+        client = self._Client()
+        client.submit("sid")
+        client.calls.clear()
+        self.assertEqual(client.reanswer("sid"), 0)
+        self.assertEqual(
+            [data for _path, data in client.calls],
+            [b"null", b"{}"],
+            "submit 的形态被直接套用到 reanswer 会 400，必须重新探测",
+        )
+
+    def test_variant_still_reused_within_same_endpoint(self):
+        client = self._Client()
+        client.submit("sid")
+        client.submit("sid")
+        self.assertEqual([data for _path, data in client.calls], [b"null", b"null"],
+                         "同一端点探到形态后应该复用，不能每次都重探")
+
+
 if __name__ == "__main__":
     unittest.main()

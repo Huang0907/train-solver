@@ -888,5 +888,44 @@ class UnverifiedSubmitGateTest(unittest.TestCase):
         self.assertFalse(Config().run.allow_unverified_submit)
 
 
+class NotSubmittedNotFailureTest(unittest.TestCase):
+    """按设置「不提交」不是答错：填了数量就该跑满（0.6.10 审计）。"""
+
+    @staticmethod
+    def _runner(**overrides):
+        from trainsolve.human import HumanResult
+
+        class OkHuman:
+            def answer(self, session_id, code, dry_run=False, should_stop=None):
+                return HumanResult(True, "已输入并校验", len(code), 1)
+
+        config = make_config(tempfile.mkdtemp())
+        config.run.sleep_between = 0
+        config.run.count = 3
+        human = None
+        if overrides.pop("human", False):
+            human = OkHuman()
+            config.run.human_input = True
+        for key, value in overrides.items():
+            setattr(config.run, key, value)
+        client = FakeClient(live_record())
+        return Runner(client, StubSolver(ANSWERS), config, log=lambda *_: None, human=human)
+
+    def test_no_submit_keeps_going(self):
+        outcomes = self._runner(submit=False).run()
+        self.assertEqual(len(outcomes), 3, "--no-submit 不是答错，填 3 题就该做 3 题")
+        self.assertTrue(all(o.not_submitted for o in outcomes))
+
+    def test_human_dry_run_keeps_going(self):
+        outcomes = self._runner(human=True, human_dry_run=True).run()
+        self.assertEqual(len(outcomes), 3, "human-dry-run 也只打字不提交，不是答错")
+        self.assertTrue(all(o.not_submitted for o in outcomes))
+
+    def test_dry_run_keeps_going(self):
+        outcomes = self._runner(dry_run=True, submit=False).run()
+        self.assertEqual(len(outcomes), 3, "dry-run 一直是跑满的（0.6.7 修），别回退")
+        self.assertTrue(all(o.not_submitted for o in outcomes))
+
+
 if __name__ == "__main__":
     unittest.main()

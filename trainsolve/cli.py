@@ -14,8 +14,10 @@ from .api import (
     STATE_NAMES,
     REDO_OK,
     ApiError,
+    LoginError,
     Session,
     TrainClient,
+    TrainError,
     qtype_kind,
 )
 from .config import (
@@ -796,6 +798,17 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(config, args) or 0)
     except ApiError as exc:
         print(f"✗ 接口错误：{exc} {exc.body[:300] if exc.body else ''}", file=sys.stderr)
+        return 2
+    except LoginError as exc:
+        # 密码/账号错时平台返回 200 + 无 sid，抛的是 LoginError；以前没人接，
+        # 命令行直接 traceback、退出码 1（0.6.10 审计）。
+        print(f"✗ {exc}", file=sys.stderr)
+        print("  检查 [platform] 的 username/password，或先跑 trainsolve login 验证。", file=sys.stderr)
+        return 2
+    except TrainError as exc:
+        # 其余可预期错误（题库抽空、周额度、限流等）同样给一行话 + 退出码 2，
+        # 不让用户对着 traceback 猜。
+        print(f"✗ {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("\n已中断", file=sys.stderr)

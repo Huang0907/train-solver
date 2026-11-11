@@ -217,7 +217,7 @@ class TrainClient:
         self.retries = retries
         self.session = session
         self.log = log
-        self._null_body_variant: bytes | None | bool = False  # False = 尚未探测
+        self._null_body_variants: dict[str, bytes | None] = {}   # 按端点分别探测/缓存请求体形态
         self._relogin_hook: Callable[[], bool] | None = None
         self._relogin_busy = False
 
@@ -360,9 +360,14 @@ class TrainClient:
         return self.request("POST", path, params=params or None, body=body)
 
     def post_no_body(self, path: str, **params: Any) -> Any:
-        """提交类接口前端传的是 null body，这里自动探测可用的请求体形态。"""
-        if self._null_body_variant is not False:
-            return self._post_variant(path, self._null_body_variant, params)
+        """提交类接口前端传的是 null body，这里自动探测可用的请求体形态。
+
+        形态**按端点分别缓存**（0.6.10 审计）：submit 接受的形态不一定被 reanswer /
+        half-redo 接受，全局共用一份会把「先提交再重答」变成 400，而新进程直接重答
+        却能成功——同一操作因调用顺序不同而行为不同，属于逻辑缺陷。
+        """
+        if path in self._null_body_variants:
+            return self._post_variant(path, self._null_body_variants[path], params)
 
         for variant in (b"null", b"{}", None):
             try:
@@ -371,7 +376,7 @@ class TrainClient:
                 if exc.status in (400, 415):
                     continue
                 raise
-            self._null_body_variant = variant
+            self._null_body_variants[path] = variant
             return result
         raise ApiError(f"POST {path} 的所有请求体形态都被拒绝", status=415)
 

@@ -461,7 +461,7 @@ class ClientApp(tk.Tk):
                             padx=self._pad(6), pady=(0, self._pad(6)))
         self.btn_model = ttk.Button(top, text="更换模型…", command=self.on_switch_model)
         self.btn_model.grid(row=1, column=6, padx=self._pad(6), pady=(0, self._pad(6)), sticky="w")
-        ttk.Button(top, text="测一测", command=self.on_test_current_model).grid(
+        ttk.Button(top, text="测试连接", command=self.on_test_current_model).grid(
             row=1, column=7, padx=self._pad(6), pady=(0, self._pad(6)), sticky="w"
         )
 
@@ -543,8 +543,8 @@ class ClientApp(tk.Tk):
 
         ttk.Separator(left).pack(fill="x", pady=self._pad(10), padx=self._pad(8))
 
-        ttk.Button(left, text="刷新标签", command=self.on_refresh_tags).pack(
-            fill="x", padx=self._pad(8), pady=self._pad(3))
+        self.btn_refresh = ttk.Button(left, text="刷新标签", command=self.on_refresh_tags)
+        self.btn_refresh.pack(fill="x", padx=self._pad(8), pady=self._pad(3))
         self.btn_auto = ttk.Button(left, text="开始自动刷题", command=self.on_auto)
         self.btn_auto.pack(fill="x", padx=self._pad(8), pady=self._pad(3))
         self.btn_loop = ttk.Button(left, text="全自动（连续刷）", command=self.on_auto_loop)
@@ -556,10 +556,16 @@ class ClientApp(tk.Tk):
 
         ttk.Separator(left).pack(fill="x", pady=self._pad(10), padx=self._pad(8))
         ttk.Label(left, text="人工模式", foreground="#555").pack(anchor="w", padx=self._pad(8))
-        ttk.Button(left, text="本地自检我的代码", command=self.on_selfcheck).pack(
-            fill="x", padx=self._pad(8), pady=self._pad(3))
+        self.btn_selfcheck = ttk.Button(left, text="本地自检我的代码", command=self.on_selfcheck)
+        self.btn_selfcheck.pack(fill="x", padx=self._pad(8), pady=self._pad(3))
         self.btn_submit = ttk.Button(left, text="提交我的代码", command=self.on_submit_mine)
         self.btn_submit.pack(fill="x", padx=self._pad(8), pady=self._pad(3))
+        # 跑任务期间要一起禁用的按钮：留一个不锁，用户点了只会弹「已有任务在跑」，
+        # 看起来像点了没反应（0.6.10 UI 审计）。六处启停共用这一份清单。
+        self._busy_buttons = (
+            self.btn_refresh, self.btn_auto, self.btn_loop, self.btn_peek,
+            self.btn_selfcheck, self.btn_submit,
+        )
 
         right = ttk.Frame(body)
         right.pack(side="left", fill="both", expand=True)
@@ -720,8 +726,12 @@ class ClientApp(tk.Tk):
         widget.configure(state="normal")
         if clear:
             widget.delete("1.0", "end")
+        # 只有「本来就在底部」或「刚清空重写」才跟着滚：任务跑起来后日志每秒好几行，
+        # 无条件 see("end") 会把正在往回翻日志的人一次次拽到底，历史根本读不了。
+        at_bottom = widget.yview()[1] >= 0.999
         widget.insert("end", text + "\n")
-        widget.see("end")
+        if clear or at_bottom:
+            widget.see("end")
         if widget is not self.txt_code:
             widget.configure(state="disabled")
 
@@ -922,7 +932,7 @@ class ClientApp(tk.Tk):
 
     def _on_worker_done(self, message: str) -> None:
         self.progress.stop()
-        for btn in (self.btn_auto, self.btn_loop, self.btn_peek, self.btn_submit):
+        for btn in self._busy_buttons:
             btn.configure(state="normal")
         if self.stop_event.is_set() and message not in ("出错", "接口错误"):
             # 用户点过停止：worker 真的退出了，才把「已请求停止」落成「已停止」
@@ -941,7 +951,10 @@ class ClientApp(tk.Tk):
             return
         self.stop_event.clear()
         self.progress.start(12)
-        for btn in (self.btn_auto, self.btn_loop, self.btn_peek, self.btn_submit):
+        # 状态栏得说清「正在跑」：以前只有进度条在转，状态栏还挂着上一次的「就绪」，
+        # 看起来像没点动（0.6.10 UI 审计）。
+        self.set_status("运行中…")
+        for btn in self._busy_buttons:
             btn.configure(state="disabled")
         self.worker = threading.Thread(target=self._wrapper, args=(target, *args), daemon=True)
         self.worker.start()
@@ -1316,7 +1329,7 @@ class ModelDialog(tk.Toplevel):
         ttk.Label(frame, text="接口地址").grid(row=3, column=0, sticky="w", pady=2)
         self.var_url = tk.StringVar()
         ttk.Entry(frame, textvariable=self.var_url, width=64).grid(row=3, column=1, columnspan=2, sticky="w", pady=2)
-        ttk.Label(frame, text="例：https://api.deepseek.com 或 http://127.0.0.1:7864/v1",
+        ttk.Label(frame, text="例：https://api.deepseek.com，或自建网关 https://api.example.com/v1",
                   foreground="#777").grid(row=4, column=1, columnspan=2, sticky="w")
 
         ttk.Label(frame, text="模型名").grid(row=5, column=0, sticky="w", pady=2)
@@ -1330,7 +1343,7 @@ class ModelDialog(tk.Toplevel):
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(12, 0))
-        ttk.Button(buttons, text="测试当前填写", command=self.on_test).pack(side="left")
+        ttk.Button(buttons, text="测试连接", command=self.on_test).pack(side="left")
         ttk.Button(buttons, text="删除此备用", command=self.on_delete).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="保存并应用", command=self.on_apply).pack(side="right", padx=6)
         ttk.Button(buttons, text="取消", command=self.destroy).pack(side="right")

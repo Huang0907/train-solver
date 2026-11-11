@@ -92,6 +92,9 @@ class RunOutcome:
     stopped: bool = False
     # 模型/网关故障（503、超时、鉴权失败等），不是“答错”，不该计入连续失败
     infra_error: bool = False
+    # 按设置「不提交」（dry-run / --no-submit / human-dry-run）：不是答错，
+    # 不该触发 stop_on_failure 与熔断计数（0.6.10 审计）
+    not_submitted: bool = False
 
     @property
     def state_name(self) -> str:
@@ -668,12 +671,14 @@ class Runner:
 
         if run_config.dry_run and not human_ready:
             outcome.detail = "dry-run：未提交"
+            outcome.not_submitted = True
             self.log("  dry-run：已保存题目与答案，未调用 submit")
             return outcome
 
         if not run_config.submit and not human_ready:
             self.log("  --no-submit：未提交（该会话将留在「未完成」状态）")
             outcome.detail = "未提交"
+            outcome.not_submitted = True
             return outcome
 
         unverified = [q for q in outcome.questions if q.kind == "programming" and q.judge_passed is False]
@@ -758,6 +763,7 @@ class Runner:
             self.log(f"  ✓ {result.message}")
             if run_config.human_dry_run:
                 outcome.detail = "human dry-run：已按真人方式输入并校验，未提交"
+                outcome.not_submitted = True
                 return outcome
             if not will_submit:
                 outcome.detail = (
@@ -765,6 +771,7 @@ class Runner:
                     if run_config.dry_run
                     else "submit=false：已按真人方式输入并校验，未提交"
                 )
+                outcome.not_submitted = True
                 self.log(f"  {outcome.detail}")
                 return outcome
             used_human = True
@@ -1068,12 +1075,16 @@ class Runner:
 
             if outcome.ok:
                 failures = 0
-            elif run_config.dry_run and target is not None:
-                # dry-run 不调用 submit，会话必然停在「未完成」。这不是答错，
-                # 不能拿它触发 stop_on_failure，否则填了数量也只会做第 1 题。
+            elif target is not None and (outcome.not_submitted or run_config.dry_run):
+                # 按设置不提交（dry-run / --no-submit / human-dry-run）：会话必然停在
+                # 「未完成」。这不是答错，不能拿它触发 stop_on_failure / 熔断计数，
+                # 否则填了数量也只会做第 1 题（0.6.10 审计：--no-submit 与 human-dry-run 曾漏掉）。
                 if not dry_noted:
                     dry_noted = True
-                    self.log("（dry-run 未提交、会话留「未完成」，不计为失败；按数量继续跑满）")
+                    self.log(
+                        "（本次按设置未提交、会话留「未完成」，不计为失败；"
+                        "按数量继续跑满）"
+                    )
             else:
                 failures += 1
                 if target is not None and run_config.stop_on_failure:

@@ -1,7 +1,11 @@
 """命令行参数 → 配置的映射（纯函数，不联网）。"""
 
 import argparse
+import io
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from trainsolve.cli import _apply_qtypes
 from trainsolve.config import Config
@@ -83,6 +87,37 @@ class CliDefaultsDoNotShadowConfigTest(unittest.TestCase):
         if override is not None:
             config.run.tag_id = override
         self.assertEqual(config.run.tag_id, 92)
+
+
+class LoginErrorExitCodeTest(unittest.TestCase):
+    """密码错（LoginError）要给一行提示 + 退出码 2，不能 traceback（0.6.10 审计）。"""
+
+    @staticmethod
+    def _config_file() -> str:
+        directory = Path(tempfile.mkdtemp())
+        path = directory / "config.toml"
+        path.write_text(
+            '[platform]\nbase_url = "http://127.0.0.1:9/"\n'
+            'username = "2026000000"\npassword = "x"\n',
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def test_login_error_returns_2(self):
+        from trainsolve import cli
+        from trainsolve.api import LoginError, TrainClient
+
+        with mock.patch.object(TrainClient, "login", side_effect=LoginError("登录失败：密码错误")):
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(cli.main(["login", "--config", self._config_file()]), 2)
+
+    def test_other_train_error_returns_2(self):
+        from trainsolve import cli
+        from trainsolve.api import NoQuestionAvailable, TrainClient
+
+        with mock.patch.object(TrainClient, "login", side_effect=NoQuestionAvailable("题库抽空")):
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(cli.main(["login", "--config", self._config_file()]), 2)
 
 
 if __name__ == "__main__":
