@@ -59,6 +59,34 @@ class DeepSeekClient:
 
     def chat(self, messages: list[dict], *, temperature: float | None = None,
              max_tokens: int | None = None, warn_on_truncation: bool = True) -> str:
+        return self._content_of(
+            self._request(messages, temperature=temperature, max_tokens=max_tokens,
+                          warn_on_truncation=warn_on_truncation)
+        )
+
+    def chat_detail(self, messages: list[dict], *, temperature: float | None = None,
+                    max_tokens: int | None = None,
+                    warn_on_truncation: bool = True) -> dict[str, Any]:
+        """同 `chat`，但把「正文 / 结束原因 / 思维链长度」一起交回来。
+
+        为什么需要：deepseek-flash 是推理型模型，思维链占 completion 预算。预算小的时候
+        会 `finish_reason=length` 且**正文为空、思维链非空**——这说明端点通、模型在答，
+        不能当成「网关没转发」。健康检查要用这个区分（2026-11-11 实测）。
+        """
+        body = self._request(messages, temperature=temperature, max_tokens=max_tokens,
+                             warn_on_truncation=warn_on_truncation)
+        choices = body.get("choices") or []
+        choice = choices[0] if choices else {}
+        message = choice.get("message") or {}
+        reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
+        return {
+            "content": self._content_of(body),
+            "finish_reason": choice.get("finish_reason"),
+            "reasoning_chars": len(reasoning) if isinstance(reasoning, str) else 0,
+        }
+
+    def _request(self, messages: list[dict], *, temperature: float | None = None,
+                 max_tokens: int | None = None, warn_on_truncation: bool = True) -> dict[str, Any]:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -83,7 +111,7 @@ class DeepSeekClient:
                         f"⚠ 求解输出被 max_tokens={payload['max_tokens']} 截断（推理型模型会把思维链算进 completion），"
                         "必要时调大 [deepseek].max_tokens"
                     )
-                return self._content_of(body)
+                return body
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", "replace")[:400]
                 if exc.code in (429, 500, 502, 503, 504) and attempt < self.retries:
@@ -159,23 +187,23 @@ class DeepSeekSolver:
         preview = (raw2 or raw or "")[:200].replace("\n", " ")
         raise SolverError(f"模型未返回可识别的 C 代码（可能是思维链被截断）：{preview}")
 
-    HEALTH_CHECK_MAX_TOKENS = 64
+    HEALTH_CHECK_MAX_TOKENS = 128
 
     def health_check(self) -> None:
         """开跑前探一次模型（网关常见 503/no_healthy_account，早发现少开会话）。
 
-        探针只关心「能不能拿到非空回复」。推理型模型会把思维链算进 completion，
-        给少了必然 `finish_reason=length`，所以：
-        * 用探针自己的预算 64（不借用求解的 16000，也不再用必然截断的 8）；
-        * `length` 截断对探针不算错误，因此关掉截断告警（求解路径仍然照旧告警）。
+        探针只关心「端点通、模型在回话」。推理型模型会把思维链算进 completion，
+        预算小时会出现 `finish_reason=length`、**正文为空但思维链非空**——这仍然说明
+        接口通、账号可用，不能判成「网关没转发」（2026-11-11 真机实测：64 预算被
+        思维链吃光，0.6.8 因此误报「模型自检失败」，整轮开不了工）。
         """
-        reply = self.client.chat(
+        detail = self.client.chat_detail(
             [{"role": "user", "content": "回复 ok"}],
             temperature=0,
             max_tokens=self.HEALTH_CHECK_MAX_TOKENS,
             warn_on_truncation=False,
         )
-        if not (reply or "").strip():
+        if not (detail.get("content") or "").strip() and not detail.get("reasoning_chars"):
             raise SolverError("模型自检返回空响应（网关可能没把请求转给可用账号）")
 
     def solve(self, question: dict) -> Answer:

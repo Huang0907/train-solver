@@ -50,5 +50,39 @@ class QTypesArgTest(unittest.TestCase):
             _apply_qtypes(config, args(qtypes="abc"))
 
 
+class CliDefaultsDoNotShadowConfigTest(unittest.TestCase):
+    """命令行没写的参数不能带默认值下来覆盖配置文件（0.6.9 修）。"""
+
+    SHADOWING = ("tag_id", "level", "qbase_type", "count", "judge",
+                 "max_repairs", "score_timeout")
+
+    def test_run_parser_leaves_them_absent(self):
+        from trainsolve.cli import build_parser
+        ns = build_parser().parse_args(["run", "--config", "x.toml"])
+        for name in self.SHADOWING:
+            self.assertFalse(
+                hasattr(ns, name),
+                f"--{name} 不该在没显式给出时带着默认值（会覆盖配置）",
+            )
+
+    def test_explicit_value_still_reaches_config(self):
+        from trainsolve.cli import build_parser
+        ns = build_parser().parse_args(["run", "--tag", "92", "--level", "3"])
+        self.assertEqual(ns.tag_id, 92)
+        self.assertEqual(ns.level, 3)
+
+    def test_config_tag_wins_when_cli_silent(self):
+        """配置里 tag_id=92、命令行不给 --tag：overrides 必须是 None。"""
+        from trainsolve.cli import build_parser
+        ns = build_parser().parse_args(["run", "--config", "x.toml"])
+        self.assertIsNone(getattr(ns, "tag_id", None))
+        config = Config()
+        config.run.tag_id = 92
+        override = getattr(ns, "tag_id", None)
+        if override is not None:
+            config.run.tag_id = override
+        self.assertEqual(config.run.tag_id, 92)
+
+
 if __name__ == "__main__":
     unittest.main()

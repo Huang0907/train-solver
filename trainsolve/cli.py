@@ -405,13 +405,19 @@ def cmd_models(config: Config, args) -> int:
                 endpoint.api_key,
                 base_url=endpoint.base_url,
                 model=endpoint.model,
-                max_tokens=64,
+                max_tokens=128,
                 timeout=min(60.0, config.deepseek.timeout),
                 retries=0,
                 log=lambda *_: None,
             )
-            reply = client.chat([{"role": "user", "content": "只回复两个字：可用"}], temperature=0)
-            print(f"     ✓ 可用，回复：{reply.strip()[:20]}")
+            detail = client.chat_detail(
+                [{"role": "user", "content": "只回复两个字：可用"}], temperature=0, max_tokens=128,
+            )
+            note = (detail.get("content") or "").strip()
+            if note:
+                print(f"     ✓ 可用，回复：{note[:20]}")
+            else:
+                print("     ✓ 可用（本轮只输出了思维链，正文被预算截断；端点与账号是通的）")
         except Exception as exc:  # noqa: BLE001 - 只报告
             print(f"     ✗ 不可用：{str(exc)[:160]}")
     return 0
@@ -551,6 +557,70 @@ def _common_parent() -> argparse.ArgumentParser:
     return parent
 
 
+def cmd_encrypt_config(config: Config, args) -> int:
+    """把明文配置加密成 `config.toml.enc`（DPAPI，绑定当前 Windows 用户）。"""
+    from . import configcrypt
+    from .config import resolve_config_path
+
+    if not configcrypt.available():
+        print("✗ 当前系统不支持 DPAPI 加密（仅 Windows）", file=sys.stderr)
+        return 2
+    if args.source:
+        source = Path(args.source)
+    elif args.config:
+        source = Path(args.config)
+    else:
+        source = resolve_config_path(None).path
+        if source.name.endswith(configcrypt.SUFFIX):
+            source = source.with_name(source.name[: -len(configcrypt.SUFFIX)])
+    if not source.exists():
+        print(f"✗ 明文配置不存在：{source}", file=sys.stderr)
+        return 2
+    if configcrypt.looks_encrypted(source):
+        print(f"✗ {source} 已经是加密文件了，不用再加密", file=sys.stderr)
+        return 2
+    target = configcrypt.encrypt_config_file(source, args.to)
+    print(f"✓ 已加密：{target}")
+    print(f"  加载器会优先读它（比同目录的 {source.name} 优先）。")
+    if args.remove_plaintext:
+        source.unlink()
+        print(f"  已删除明文：{source.name}")
+    else:
+        print(f"  ⚠ 明文 {source.name} 还在：确认能跑通后再删，或用 --remove-plaintext 一步到位。")
+    return 0
+
+
+def cmd_decrypt_config(config: Config, args) -> int:
+    """把加密配置还原成明文（默认去掉 `.enc` 后缀）。"""
+    from . import configcrypt
+    from .config import resolve_config_path
+
+    if args.source:
+        source = Path(args.source)
+    else:
+        source = resolve_config_path(args.config).path
+        if not source.name.endswith(configcrypt.SUFFIX):
+            encrypted = configcrypt.encrypted_sibling(source)
+            if encrypted is None:
+                print(f"✗ 没有找到加密配置：{source}（也没有 .enc 同名文件）", file=sys.stderr)
+                return 2
+            source = encrypted
+    if not source.exists():
+        print(f"✗ 文件不存在：{source}", file=sys.stderr)
+        return 2
+    if not configcrypt.looks_encrypted(source):
+        print(f"✗ {source} 不是加密文件", file=sys.stderr)
+        return 2
+    try:
+        target = configcrypt.decrypt_config_file(source, args.to, overwrite=args.force)
+    except configcrypt.ConfigCryptoError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 2
+    print(f"✓ 已解密：{target}")
+    print("  ⚠ 明文里有账号/密码/Key，用完请删掉，或重新 encrypt-config。")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = _common_parent()
     parser = argparse.ArgumentParser(
@@ -583,18 +653,23 @@ def build_parser() -> argparse.ArgumentParser:
     tags.set_defaults(func=cmd_tags)
 
     run = sub.add_parser("run", help="刷题主流程", parents=[common])
-    run.add_argument("--qbase-type", type=int, default=4)
-    run.add_argument("--level", type=int, default=2)
-    run.add_argument("--tag", dest="tag_id", type=int, default=-1, help="-1 随机，其它值为标签 id")
-    run.add_argument("--count", type=int, default=1, help="做几道（编程题一次一道）；0 等同于 --auto")
+    # 这里的非 None 默认值会经 main() 的 overrides 覆盖配置文件里的值（0.6.8 实测：
+    # 配置写 tag_id=92，不带 --tag 跑起来仍是 -1）。所以一律 SUPPRESS：
+    # 没在命令行显式给出，就让配置文件说了算。
+    run.add_argument("--qbase-type", type=int, default=argparse.SUPPRESS)
+    run.add_argument("--level", type=int, default=argparse.SUPPRESS)
+    run.add_argument("--tag", dest="tag_id", type=int, default=argparse.SUPPRESS,
+                     help="-1 随机，其它值为标签 id（默认读配置，配置没写才用 -1）")
+    run.add_argument("--count", type=int, default=argparse.SUPPRESS,
+                     help="做几道（编程题一次一道）；0 等同于 --auto（默认读配置）")
     run.add_argument("--auto", action="store_true",
                      help="全自动：完成一道自动抽下一道，直到没有题/本周限额/连续失败/手动停止")
     run.add_argument("--max-failures", type=int, default=None, metavar="N",
                      help="全自动模式下连续未满分多少题后熔断（默认 3）")
-    run.add_argument("--judge", choices=["local", "server", "both", "none"], default="local")
-    run.add_argument("--max-repairs", type=int, default=3)
+    run.add_argument("--judge", choices=["local", "server", "both", "none"], default=argparse.SUPPRESS)
+    run.add_argument("--max-repairs", type=int, default=argparse.SUPPRESS)
     run.add_argument("--gcc", help="指定 gcc 路径")
-    run.add_argument("--score-timeout", type=float, default=300.0)
+    run.add_argument("--score-timeout", type=float, default=argparse.SUPPRESS)
     run.add_argument("--dry-run", action="store_true", help="只出题+生成答案，不暂存不提交")
     run.add_argument("--no-submit", action="store_true", help="自检通过后只落盘，不提交")
     run.add_argument("--yes", action="store_true", help="跳过提交前确认")
@@ -619,18 +694,18 @@ def build_parser() -> argparse.ArgumentParser:
     show.set_defaults(func=cmd_show)
 
     peek = sub.add_parser("peek", help="看题：默认新建会话（写 choose-q），带 --session 则只读", parents=[common])
-    peek.add_argument("--qbase-type", type=int, default=4)
-    peek.add_argument("--level", type=int, default=2)
-    peek.add_argument("--tag", dest="tag_id", type=int, default=-1)
+    peek.add_argument("--qbase-type", type=int, default=argparse.SUPPRESS)
+    peek.add_argument("--level", type=int, default=argparse.SUPPRESS)
+    peek.add_argument("--tag", dest="tag_id", type=int, default=argparse.SUPPRESS)
     peek.add_argument("--session", help="只看这个既有会话（只读，不发 choose-q）")
     peek.set_defaults(func=cmd_peek)
 
     resume = sub.add_parser("resume", help="对已有会话续做并提交", parents=[common])
     resume.add_argument("--session", required=True)
-    resume.add_argument("--judge", choices=["local", "server", "both", "none"], default="local")
-    resume.add_argument("--max-repairs", type=int, default=3)
+    resume.add_argument("--judge", choices=["local", "server", "both", "none"], default=argparse.SUPPRESS)
+    resume.add_argument("--max-repairs", type=int, default=argparse.SUPPRESS)
     resume.add_argument("--gcc")
-    resume.add_argument("--score-timeout", type=float, default=300.0)
+    resume.add_argument("--score-timeout", type=float, default=argparse.SUPPRESS)
     resume.add_argument("--no-submit", action="store_true")
     resume.add_argument("--yes", action="store_true")
     _add_human_args(resume)
@@ -657,6 +732,21 @@ def build_parser() -> argparse.ArgumentParser:
     models = sub.add_parser("models", help="列出主/备模型端点（可逐个测试连通性）", parents=[common])
     models.add_argument("--check", action="store_true", help="对每个端点发一次最小请求验证可用性")
     models.set_defaults(func=cmd_models)
+
+    enc = sub.add_parser("encrypt-config",
+                         help="把明文配置加密成 config.toml.enc（DPAPI，仅当前用户可解）",
+                         parents=[common])
+    enc.add_argument("--source", help="要加密的明文配置；默认用解析到的配置路径")
+    enc.add_argument("--to", help="输出路径；默认在源文件后面加 .enc")
+    enc.add_argument("--remove-plaintext", action="store_true", help="加密后删掉明文文件")
+    enc.set_defaults(func=cmd_encrypt_config)
+
+    dec = sub.add_parser("decrypt-config", help="把加密配置还原成明文", parents=[common])
+    dec.add_argument("--source", help="要解密的 .enc 文件；默认用解析到的配置路径")
+    dec.add_argument("--to", help="输出路径；默认去掉 .enc 后缀")
+    dec.add_argument("--force", action="store_true",
+                     help="目标明文已存在时允许覆盖（默认拒绝，免得冲掉更新的那份）")
+    dec.set_defaults(func=cmd_decrypt_config)
 
     return parser
 

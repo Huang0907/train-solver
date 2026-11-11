@@ -30,6 +30,7 @@ from .humantype import (
     HumanTyper,
     TypingProfile,
     TypingStopped,
+    comparable_code,
     first_diff,
     normalize_code,
 )
@@ -137,6 +138,50 @@ EDITOR_FOCUS_JS = """(() => {
 })()"""
 
 
+# 读「光标所在行」并拆成光标前/后两段。
+# 平台编辑器会自动补括号（敲 `(` 变成 `()`、光标夹在中间），只读整行会把自动补的
+# `)` 当成多余字符退格掉，于是和编辑器互相对抗——必须知道哪部分是「光标后」。
+#
+# 列号**必须用 Range 量**，不能自己遍历文本节点累加：CodeMirror 重渲染后 selection
+# 的锚点会变成 `.cm-line` 这个元素本身（offset 是**子节点序号**，不是字符数）。
+# 2026-11-11 真机实测：打 `for (int` 后锚点是 DIV、offset=3，按字符累加会算成
+# 「光标在 `for (int)` 之后（列 13）」——实际光标还在 `t` 与 `)` 之间（列 12）。
+# 于是工具以为 `)` 在光标前、倒回去删，把刚打的 t/n/i 一个个删光，整行打成空。
+CURSOR_LINE_JS = """(() => {
+  const el = document.querySelector('.cm-content');
+  if (!el) return null;
+  const lines = el.querySelectorAll('.cm-line');
+  const doc = lines.length ? Array.from(lines).map(l => l.textContent).join('\\n') : el.innerText;
+  const out = {doc: doc, line: null, col: null, before: null, after: null};
+  const sel = window.getSelection && window.getSelection();
+  if (!sel || !sel.rangeCount) return out;
+  const range = sel.getRangeAt(0);
+  const node = range.startContainer;
+  if (!node) return out;
+  const host = node.nodeType === 3 ? node.parentElement : node;
+  const lineEl = host && host.closest ? host.closest('.cm-line') : null;
+  if (!lineEl) return out;
+  const text = lineEl.textContent;
+  let col = 0;
+  try {
+    // 从行首量到光标：容器是文本节点还是元素都算得对
+    const probe = document.createRange();
+    probe.selectNodeContents(lineEl);
+    probe.setEnd(node, range.startOffset);
+    col = probe.toString().length;
+  } catch (err) {
+    return out;
+  }
+  if (col < 0) col = 0;
+  if (col > text.length) col = text.length;
+  out.line = text;
+  out.col = col;
+  out.before = text.slice(0, col);
+  out.after = text.slice(col);
+  return out;
+})()"""
+
+
 class HumanError(RuntimeError):
     pass
 
@@ -183,6 +228,12 @@ class PlaywrightIO:
 
     def read_doc(self) -> str | None:
         return self.page.evaluate(READ_DOC_JS)
+
+    def cursor_line(self) -> dict | None:
+        try:
+            return self.page.evaluate(CURSOR_LINE_JS)
+        except Exception:  # noqa: BLE001 - 读不到就走整行回退
+            return None
 
     def focus_info(self) -> str:
         return str(self.page.evaluate(FOCUS_JS))
@@ -406,6 +457,12 @@ class CDPTyperIO:
     def read_doc(self) -> str | None:
         return self._evaluate(f"({READ_DOC_JS})()")
 
+    def cursor_line(self) -> dict | None:
+        try:
+            return self._evaluate(CURSOR_LINE_JS)
+        except Exception:  # noqa: BLE001 - 读不到就走整行回退
+            return None
+
     def focus_info(self) -> str:
         return str(self._evaluate(f"({FOCUS_JS})()"))
 
@@ -448,29 +505,61 @@ class CDPTyperIO:
 # ---------------------------------------------------------------- 工具
 
 
-def _code_from_body(body: str | None) -> str | None:
-    """从平台请求体里挑出代码字符串（post-answer / run-code 都适用）。"""
+_ANSWER_KEYS = ("answer", "code", "studentanswer", "student_answer")
+
+
+def _code_candidates(body: str | None) -> list[tuple[str, str]]:
+    """列出请求体里「可能被当成代码」的字符串：[(JSON 路径, 文本), ...]。
+
+    为什么要列出来：平台 body 里除了答案，还可能有题面 `content`、模板 `template`、
+    甚至别的题目。旧实现只取「第一个长度 > 30 且含 int main/#include 的串」，
+    题面排在答案前面时就会挑错（2026-11-11 后端复现：352 / 52 字符的两例）。
+    显式字段优先，其它候选按出现顺序留在后面，报错时能一眼看出挑的是谁。
+    """
     if not body:
-        return None
+        return []
     try:
         data = json.loads(body)
     except Exception:  # noqa: BLE001
-        return None
-    found: list[str] = []
+        return []
+    keyed: list[tuple[str, str]] = []
+    loose: list[tuple[str, str]] = []
 
-    def walk(value) -> None:
+    def walk(value, path: str, key: str) -> None:
         if isinstance(value, str):
-            if len(value) > 30 and ("int main" in value or "#include" in value):
-                found.append(value)
+            lowered = key.lower()
+            if lowered in _ANSWER_KEYS:
+                keyed.append((path, value))
+            elif len(value) > 30 and ("int main" in value or "#include" in value):
+                loose.append((path, value))
         elif isinstance(value, dict):
-            for item in value.values():
-                walk(item)
+            for name, item in value.items():
+                walk(item, f"{path}.{name}", str(name))
         elif isinstance(value, list):
-            for item in value:
-                walk(item)
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]", key)
 
-    walk(data)
-    return found[0] if found else None
+    walk(data, "$", "")
+    return keyed + loose
+
+
+def _code_from_body(body: str | None) -> str | None:
+    """从平台请求体里挑出代码字符串（post-answer / run-code 都适用）。"""
+    candidates = _code_candidates(body)
+    # 只认「像代码」的：题面/模板也可能挂在 answer 字段以外的键上，靠内容再筛一道
+    for _path, text in candidates:
+        if len(text) > 20 or "int main" in text or "#include" in text:
+            return text
+    return candidates[0][1] if candidates else None
+
+
+def _describe_candidates(body: str | None, limit: int = 4) -> str:
+    """把候选串压成一行日志：路径 + 长度 + 开头，用来判断挑中了谁。"""
+    parts = []
+    for path, text in _code_candidates(body)[:limit]:
+        head = text.strip().replace("\n", " ")[:24]
+        parts.append(f"{path}({len(text)}字符 {head!r})")
+    return "；".join(parts) if parts else "（body 里没有候选串）"
 
 
 def _api_code(entry: dict) -> int | None:
@@ -893,56 +982,90 @@ class HumanBrowser:
         于是会出现「请求体里已是完整代码，点提交却带旧快照」——
         2026-11-02 真机因此让平台编译了 339 字符的截断代码、判 0/12。
         """
-        want = normalize_code(expected)
+        want = comparable_code(expected)
         deadline = time.time() + timeout
-        last_len = -1
+        best_len = -1
         last_rejection: int | None = None
         pending_logged = False
+        body_seen = 0
+        last_body: str | None = None
+        exact_mark: int | None = None      # 第一次看到「body 就是目标代码」时的网络游标
         while time.time() < deadline:
             if should_stop is not None and should_stop():
                 # 同步窗口最多 18+10 秒：点「停止」不能等到这里才生效（0.6.8）
                 self.log("  已请求停止：不再等前端同步，也不提交")
                 return None
-            pending = False
             for entry in self._sync_candidates(since=since, net_since=net_since):
+                if entry.get("source") == "net":
+                    continue          # 网络层只用来判「回执到了没有」，body 常拿不到
                 body_code = _code_from_body(entry.get("body"))
                 if not body_code:
                     continue
+                body_seen += 1
+                last_body = entry.get("body")
                 api_code = _api_code(entry)
                 if api_code is not None and api_code != 0:
                     if api_code != last_rejection:
                         last_rejection = api_code
                         self.log(f"  ⚠ 暂存被平台拒绝（code={api_code}），不提交，继续等前端重发…")
                     continue
-                actual = normalize_code(body_code)
+                actual = comparable_code(body_code)
                 if actual != want:
-                    if len(actual) != last_len:
-                        last_len = len(actual)
-                        self.log(f"  暂存还是旧快照（{last_len} / {len(want)} 字符），继续等…")
-                    continue
-                if not entry.get("done"):
-                    pending = True
+                    # 只报「见过的最长」：同一个 since 会被反复扫，逐条报会把日志刷爆
+                    if len(actual) > best_len:
+                        best_len = len(actual)
+                        self.log(f"  暂存里最长的代码 {best_len} / {len(want)} 字符，继续等…")
                     continue
                 status = entry.get("status")
                 if status is not None and not (200 <= int(status) < 300):
                     self.log(f"  ⚠ 暂存请求返回 HTTP {status}，继续等…")
                     continue
-                self.log(
-                    f"  App 侧代码已暂存成功（{len(want)} 字符，"
-                    f"平台已回执 code={api_code if api_code is not None else 'n/a'}）"
-                )
-                self._pump(0.6)   # 让提交处理器读到更新后的组件状态
-                return True
-            if pending and not pending_logged:
-                pending_logged = True
-                self.log("  完整代码的暂存请求已发出，等平台回执…")
+                if entry.get("done"):
+                    self.log(
+                        f"  App 侧代码已暂存成功（{len(want)} 字符，"
+                        f"平台已回执 code={api_code if api_code is not None else 'n/a'}）"
+                    )
+                    self._pump(0.6)   # 让提交处理器读到更新后的组件状态
+                    return True
+                if exact_mark is None:
+                    exact_mark = self._net_len()
+                    if not pending_logged:
+                        pending_logged = True
+                        self.log("  完整代码的暂存请求已发出，等平台回执…")
+            if exact_mark is not None:
+                # 页面层拿不到 done（loadend 不触发），回执在 Playwright 网络层：
+                # 只要「body 精确」+「之后有一条 2xx code=0 的回执」就成立。
+                for net in self._net_captured(exact_mark):
+                    if "post-answer" not in (net.get("url") or ""):
+                        continue
+                    status = net.get("status")
+                    api_code = _api_code(net)
+                    if status is not None and not (200 <= int(status) < 300):
+                        continue
+                    if api_code not in (None, 0):
+                        continue
+                    self.log(f"  App 侧代码已暂存成功（{len(want)} 字符，请求体一致且平台回执 code=0）")
+                    self._pump(0.6)
+                    return True
             self._pump(0.5)
+
+        # 失败原因必须分开说，别把「回执没到」写成「没回执」、也别把「挑错串」写成「旧快照」
+        if body_seen == 0:
+            self.log("  ⚠ 一条带代码的 post-answer 都没抓到（前端可能根本没发暂存）")
+        elif exact_mark is None:
+            self.log(
+                f"  ⚠ 抓到 {body_seen} 条暂存，但没有一条等于目标代码"
+                f"（见过最长 {best_len} / {len(want)} 字符）；最后一条的候选串："
+                f"{_describe_candidates(last_body)}"
+            )
+        else:
+            self.log("  ⚠ 请求体已是目标代码，但没等到平台回执（code=0），不提交")
 
         got = self.run_code(since=since, net_since=net_since)
         if got is None:
-            self.log("  ⚠ 等不到暂存回执、也抓不到运行请求，无法核对 App 侧代码")
+            self.log("  点「运行」也没抓到请求，无法核对 App 侧代码")
             return False
-        actual = normalize_code(got)
+        actual = comparable_code(got)
         same = actual == want
         self.log(f"  App 侧代码核对（运行）：{len(actual)} / {len(want)} 字符 → {'一致' if same else '不一致'}")
         if not same:

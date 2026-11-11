@@ -17,6 +17,23 @@ import tkinter as tk
 from trainsolve import gui
 
 
+def _encrypted(path: Path) -> Path:
+    """0.6.9 起界面保存默认写**加密**文件：`settings_path()` 给明文名，落盘加 `.enc`。"""
+    from trainsolve import configcrypt
+
+    if configcrypt.available() and not path.name.endswith(configcrypt.SUFFIX):
+        return path.with_name(path.name + configcrypt.SUFFIX)
+    return path
+
+
+def _read_saved(path: Path) -> str:
+    """按落盘实际形态读回配置文本（加密就解密），供测试断言内容。"""
+    from trainsolve import configcrypt
+
+    enc = _encrypted(path)
+    return configcrypt.read_config_text(enc if enc.exists() else path)
+
+
 # 整个模块共用的配置夹具：**绝不让单测读、更不让它写本机真实配置**。
 #
 # 2026-11-06 的教训：GUI 改成走统一解析器后，构造 ClientApp 会解析到开发机真实的
@@ -115,8 +132,14 @@ class SettingsPathSideEffectTest(unittest.TestCase):
                     mock.patch.object(gui, "config_resolution", return_value=resolved):
                 gui.save_client_config(gui.Config())
             self.assertTrue(resolved.path.parent.exists(), "保存后目录应已创建")
-            self.assertTrue(resolved.path.exists(), "保存后配置文件应已创建")
-            self.assertIn("[platform]", resolved.path.read_text(encoding="utf-8"))
+            saved = _encrypted(resolved.path)
+            self.assertTrue(saved.exists(), "保存后配置文件应已创建（0.6.9 起是加密文件）")
+            self.assertIn("[platform]", _read_saved(resolved.path))
+            if saved != resolved.path:
+                self.assertFalse(
+                    resolved.path.exists(),
+                    "加密写成功后不该再留明文；否则「配置加密」等于白做",
+                )
 
 
 @unittest.skipUnless(_tk_available(), "没有可用的图形环境")
@@ -770,7 +793,8 @@ class ConfigPersistenceTest(unittest.TestCase):
                 cfg.platform.username = "2000000001"
                 cfg.run.max_repairs = 2
                 gui.save_client_config(cfg)
-                self.assertTrue(target.exists())
+                self.assertTrue(_encrypted(target).exists(), "0.6.9 起保存写加密文件")
+                self.assertFalse(target.exists(), "加密写成功后不该再留明文")
 
                 saved = gui.load_config(str(target))
                 self.assertEqual(saved.deepseek.api_key, "sk-test-123")
@@ -785,7 +809,7 @@ class ConfigPersistenceTest(unittest.TestCase):
             target = Path(tmp) / "config.toml"
             with mock.patch.object(gui, "settings_path", return_value=target):
                 gui.save_client_config(gui.load_config(None))
-            data = tomllib.loads(target.read_text(encoding="utf-8"))
+            data = tomllib.loads(_read_saved(target))
             self.assertIn("deepseek", data)
             self.assertIn("platform", data)
 
@@ -809,7 +833,7 @@ class ConfigPersistenceTest(unittest.TestCase):
                 cfg.run.solver = "stub"
                 gui.save_client_config(cfg)
 
-            raw = tomllib.loads(target.read_text(encoding="utf-8"))["run"]
+            raw = tomllib.loads(_read_saved(target))["run"]
             self.assertIs(raw["submit"], False)
             self.assertIs(raw["dry_run"], True)
             self.assertIs(raw["confirm"], False)

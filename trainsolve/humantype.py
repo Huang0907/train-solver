@@ -305,39 +305,143 @@ class HumanTyper:
             return ""
         return doc.replace(NBSP, " ").split("\n")[-1]
 
-    def _type_body(self, text: str, *, allow_typos: bool = False) -> None:
-        """逐字符打一段内容（不含换行），**每敲一个字符前先读文档、按真实内容决定下一个键**。
+    def _ensure_focus(self) -> str | None:
+        """把焦点放回编辑器（实现不支持时返回 None）。"""
+        ensure = getattr(self.io, "ensure_focus", None)
+        if ensure is None:
+            return None
+        try:
+            return str(ensure())
+        except Exception:  # noqa: BLE001 - 聚焦失败按后续校验兜底
+            return None
 
-        0.6.8 起不再「整行盲打、打完再修」：每次按键前先看这一行现在是什么样，
-        于是丢键、编辑器自动补全/自动缩进、多插的字符都在**下一次按键之前**被吸收，
-        不会出现「一行打错、回头整行修」。同时保留抖动 / 连打 / 偶发打错再退格 /
-        随机退格，内容最终一定等于目标。
+    def _cursor_state(self) -> dict | None:
+        """读「光标前/后」；实现不支持或读失败时返回 None（退回整行比较）。"""
+        reader = getattr(self.io, "cursor_line", None)
+        if reader is None:
+            return None
+        try:
+            state = reader()
+        except Exception:  # noqa: BLE001 - 读失败就走回退路径
+            return None
+        if not isinstance(state, dict) or state.get("before") is None:
+            return None
+        return state
+
+    def _delete_chars(self, count: int, *, forward: bool = False) -> None:
+        """删字符：`forward=True` 用 Delete（删光标**后**的自动补全尾巴）。"""
+        for _ in range(max(0, count)):
+            if self.should_stop():
+                raise TypingStopped()
+            self.io.press("Delete" if forward else "Backspace")
+            self.sleep(min(0.06, max(self.profile.burst_delay, 0.012)))
+
+    def _type_char_paced(self, ch: str, *, allow_typos: bool, burst_left: int) -> int:
+        """带节奏地敲一个字符（含偶发打错再退格），返回剩余的连打计数。"""
+        burst_left = self._pause_char(burst_left)
+        if allow_typos and self.timing.should_typo():
+            self.io.type_char(self.timing.typo_char())
+            self.sleep(self.timing.char_delay())
+            self.io.press("Backspace")
+        self.io.type_char(ch)
+        return burst_left
+
+    def _type_body(self, text: str, *, allow_typos: bool = False) -> None:
+        """逐字符打一段内容（不含换行）：每敲一个字符前先读**光标前/后**再决定下一个键。
+
+        平台编辑器会自动补括号（敲 `(` 得到 `()`、光标夹在中间）。只看整行会把自动补的
+        `)` 当成多余字符退格掉，于是和编辑器互相对抗、永远打不完（0.6.8 现场实测）。
+        所以按光标两侧判断：
+
+        * 光标前正好是目标的正确前缀 → 补打下一个字符；
+        * 光标前已经等于目标、光标后还有字符 → 是自动补的尾巴，用 Delete 删掉；
+        * 光标前打多了/打错了 → 退格回到公共前缀。
+
+        **行首缩进不参与比较**（2026-11-11 真机）：这个编辑器还会「智能缩进」——回车把新行
+        补成 8 个空格，打 `{` 时整行重排并补 `}`。C 代码的缩进不影响编译与判分，所以这里
+        只对齐缩进之后的**内容**，不再为空格和编辑器拉锯（拉锯会把刚打的字删光）。
+
+        没有 `cursor_line` 的实现（离线假 IO）退回「整行比较」的旧逻辑。
         """
         want = text.rstrip(" ")
+        target = want.lstrip(" \t")          # 要去匹配的正文（不含行首缩进）
         burst_left = 0
-        typed = 0            # 本行已经发出去的字符数（用来发现「键没落到文档里」）
+        fallback_typed = 0        # 回退路径用：上一轮文档里的字符数（发现丢键）
+        last_before: str | None = None
+        stalls = 0                # 连着多少次「按键没落到文档里」
         steps = 0
-        limit = max(60, len(text) * 3 + 40)   # 上限只是防读值异常死循环
+        limit = max(80, len(text) * 3 + 60)   # 上限只是防读值异常死循环
         while steps < limit:
             steps += 1
             if self.should_stop():
                 raise TypingStopped()
+            # 每 12 个按键主动确认一次焦点：平台前端重渲染会把焦点弄丢，
+            # 丢了之后后面所有按键都打空（2026-11-11 真机实测，第 11 行起丢）。
+            if steps % 12 == 1:
+                self._ensure_focus()
+
+            state = self._cursor_state()
+            if state is not None:
+                before_raw = str(state.get("before") or "").replace(NBSP, " ")
+                before = before_raw.lstrip(" \t")
+                after = str(state.get("after") or "").replace(NBSP, " ")
+                if last_before is not None and before == last_before and before != target:
+                    stalls += 1
+                    if stalls >= 2:
+                        # 键盘打不动了：先把焦点抢回来再继续
+                        self._ensure_focus()
+                    if stalls >= 6:
+                        self.log("    ⚠ 按键连续打不进编辑器，放弃这一行")
+                        return
+                else:
+                    stalls = 0
+                last_before = before
+                if before == target:
+                    if not after:
+                        return
+                    self.line_repairs += 1
+                    self._delete_chars(len(after), forward=True)   # 自动补的尾巴
+                    continue
+                if target.startswith(before):
+                    burst_left = self._type_char_paced(
+                        target[len(before)], allow_typos=allow_typos, burst_left=burst_left
+                    )
+                    if (allow_typos and len(before) >= 1
+                            and self.timing.should_backspace()):
+                        # 随机退格：删掉刚打的 1..N 个字符，**立即原样补回**
+                        count = min(self.timing.backspace_count(), len(before))
+                        self._delete_chars(count)
+                        for fix_ch in target[len(before) - count:len(before)]:
+                            self.io.type_char(fix_ch)
+                            self.sleep(self.timing.char_delay())
+                    continue
+                # 光标前与目标不一致：退到公共前缀
+                common = 0
+                for a, b in zip(before, target):
+                    if a != b:
+                        break
+                    common += 1
+                self.line_repairs += 1
+                self._delete_chars(len(before) - common)
+                continue
+
+            # ---- 回退路径：没有光标信息时按「文档最后一行」比较 ----
             line = self._current_line()
             got = line[self._leading_spaces(line):]
-            if got.rstrip(" ") == want:
+            if got.rstrip(" ") == target:
                 return
             # 不一致时做一次稳定回读：CDP 求值可能读到「按键还没生效」的旧值，
             # 按旧值补打就会重复输入。
             line = self._current_line(settle=True)
             got = line[self._leading_spaces(line):]
-            if got.rstrip(" ") == want:
+            if got.rstrip(" ") == target:
                 return
-            if typed > len(got):
-                # 发出去的键比文档里多出来的少 → 有键丢了，补打属于修复
+            if fallback_typed > len(got):
+                # 发出去的键比文档里多出来少 → 丢了键，补打属于修复
                 self.line_repairs += 1
-            typed = len(got)
+            fallback_typed = len(got)
             common = 0
-            for a, b in zip(got, want):
+            for a, b in zip(got, target):
                 if a != b:
                     break
                 common += 1
@@ -345,17 +449,11 @@ class HumanTyper:
                 # 多了字符（自动补全/多插）→ 退格删掉
                 burst_left = self._pause_char(burst_left)
                 self.io.press("Backspace")
-                typed = max(0, typed - 1)
                 continue
             # 少了字符（丢键 / 还没打）→ 补下一个
-            ch = want[len(got)]
-            burst_left = self._pause_char(burst_left)
-            if allow_typos and self.timing.should_typo():
-                self.io.type_char(self.timing.typo_char())
-                self.sleep(self.timing.char_delay())
-                self.io.press("Backspace")
-            self.io.type_char(ch)
-            typed += 1
+            ch = target[len(got)]
+            burst_left = self._type_char_paced(ch, allow_typos=allow_typos, burst_left=burst_left)
+            fallback_typed = len(got) + 1
             if allow_typos and len(got) >= 1 and self.timing.should_backspace():
                 # 随机退格：删掉刚打的 1..N 个字符（含刚敲的这个），**原样补回**——
                 # 只制造真实按键，不能真把进度删掉（否则自适应循环会一直打同一行）。
@@ -365,10 +463,10 @@ class HumanTyper:
                 for _ in range(count):
                     self.io.press("Backspace")
                     self.sleep(self.timing.char_delay())
-                for fix_ch in want[start:done]:
+                for fix_ch in target[start:done]:
                     self.io.type_char(fix_ch)
                     self.sleep(self.timing.char_delay())
-                typed = done
+                fallback_typed = done
         self.log(f"    ⚠ 行内自适应输入没收敛：{want[:40]!r}")
 
     # -------------------------------------------------------- 自动缩进 / 行内校正
@@ -428,8 +526,10 @@ class HumanTyper:
         self.indent_fixes += 1
 
     def _newline(self, expected_newlines: int) -> None:
-        """按回车开新行；没开成（丢键）就再按，最多 3 次。"""
-        for _ in range(3):
+        """按回车开新行；没开成（丢键/丢焦点）就自愈焦点再按，最多 5 次。"""
+        for attempt in range(5):
+            if attempt and attempt % 2 == 0:
+                self._ensure_focus()
             self.io.press("Enter")
             doc = self._settle()
             if doc.count("\n") >= expected_newlines:
@@ -458,8 +558,13 @@ class HumanTyper:
                 ensure = getattr(self.io, "ensure_focus", None)
                 if ensure is not None:
                     ensure()
-            self._align_indent(want_indent)
-            self._type_body(line[want_indent:], allow_typos=allow_typos)
+            cursor_state = self._cursor_state()
+            if cursor_state is not None:
+                # 缩进交给编辑器的智能缩进，不再手动对齐（手动对齐会和它拉锯）
+                self._type_body(line, allow_typos=allow_typos)
+            else:
+                self._align_indent(want_indent)
+                self._type_body(line[want_indent:], allow_typos=allow_typos)
             if (index + 1) % 10 == 0:
                 self.log(f"    已输入 {index + 1}/{len(lines)} 行")
 
@@ -469,8 +574,14 @@ class HumanTyper:
         return normalize_code(self._settle())
 
     def verify(self, expected: str) -> bool:
-        actual = self.read_back()
-        want_norm = normalize_code(expected)
+        """比对文档：**行首缩进不计**（C 代码的缩进不影响编译与判分）。
+
+        这个编辑器会「智能缩进」（回车补到 8 空格、打 `{` 时整行重排），硬要逐格对齐
+        缩进只会和它拉锯、把刚打的字删光（2026-11-11 真机）。文档是否完整、有没有截断，
+        去掉行首空白后照样比得出来。
+        """
+        actual = comparable_code(self.read_back())
+        want_norm = comparable_code(expected)
         line, column, want, got = first_diff(want_norm, actual)
         if line == 0:
             return True
@@ -529,9 +640,24 @@ class HumanTyper:
         return False
 
 
+def _strip_indent(text: str) -> str:
+    """逐行去掉行首空白（只动行首，行内空格保留）。"""
+    return "\n".join(line.lstrip(" \t") for line in text.split("\n"))
+
+
+def comparable_code(text: str) -> str:
+    """比较用的规范形：normalize + 去掉行首缩进。
+
+    打字校验、前端暂存同步、运行核对**必须用同一把尺子**：0.6.9 起打字把行首缩进
+    交给编辑器的智能缩进，编辑器会补出比目标更多的空格（实测 996 → 1140）。
+    只改打字校验不改同步判定，提交前那一关就会永远等不到（2026-11-11 真机）。
+    """
+    return _strip_indent(normalize_code(text))
+
+
 def is_probably_same(expected: str, actual: str) -> bool:
-    """宽松比较：忽略行尾空白与多余空行。"""
-    return normalize_code(expected) == normalize_code(actual)
+    """宽松比较：忽略行首缩进、行尾空白与多余空行。"""
+    return comparable_code(expected) == comparable_code(actual)
 
 
 _WHITESPACE_ONLY = re.compile(r"^\s*$")

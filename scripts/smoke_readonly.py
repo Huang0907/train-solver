@@ -189,21 +189,28 @@ class Redactor:
         return text
 
 
+def _prefer_encrypted(path: Path) -> Path:
+    """同名 `.enc` 存在就用它（0.6.9 起配置可以加密存放，加载器也是这个优先级）。"""
+    encrypted = path.with_name(path.name + ".enc")
+    return encrypted if encrypted.exists() else path
+
+
 def resolve_config_path(explicit: str | None) -> Path:
     if explicit:
         path = Path(explicit).expanduser()
-        if not path.exists():
+        chosen = _prefer_encrypted(path)
+        if not chosen.exists():
             raise Abort(EXIT_PRECONDITION, f"指定的配置文件不存在：{path}")
-        return path
+        return chosen
     appdata = os.environ.get("APPDATA")
     if appdata:
-        candidate = Path(appdata) / "TrainSolve" / "config.toml"
+        candidate = _prefer_encrypted(Path(appdata) / "TrainSolve" / "config.toml")
         if candidate.exists():
             return candidate
-    candidate = Path.cwd() / "config.toml"
+    candidate = _prefer_encrypted(Path.cwd() / "config.toml")
     if candidate.exists():
         return candidate
-    raise Abort(EXIT_PRECONDITION, "找不到 config.toml（既不在 %APPDATA%\\TrainSolve 也不在当前目录）")
+    raise Abort(EXIT_PRECONDITION, "找不到 config.toml / config.toml.enc（既不在 %APPDATA%\\TrainSolve 也不在当前目录）")
 
 
 def newest_local_session(out_dir: Path) -> str | None:

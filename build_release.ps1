@@ -37,23 +37,41 @@ if ($stale.Count -gt 0) {
     throw "release\ 里出现 full 包：$names。本项目只产出 public，full 已取消，请先把它们移走再打包。"
 }
 
-# 真实凭据不写进仓库：从本机 config.toml（被 .gitignore 挡住）读学号与 Key，取前缀做扫描名单
+# 真实凭据不写进仓库：从本机 config（被 .gitignore 挡住）读学号与 Key，取前缀做扫描名单
+# 0.6.9 起本机配置可能已加密成 config.toml.enc：先用 CLI 解密到临时文件再读，读完立刻删。
 $secretForbidden = @()
 $localConfig = Join-Path $here 'config.toml'
-if (Test-Path $localConfig) {
-    $cfgText = [System.IO.File]::ReadAllText($localConfig)
-    foreach ($pattern in @('(?m)^\s*username\s*=\s*"([^"]+)"', '(?m)^\s*api_key\s*=\s*"([^"]+)"')) {
-        foreach ($match in [regex]::Matches($cfgText, $pattern)) {
-            $value = $match.Groups[1].Value
-            if ($value.Length -ge 6) {
-                $secretForbidden += $value.Substring(0, [Math]::Min(8, $value.Length))
+$encConfig = Join-Path $here 'config.toml.enc'
+$tempConfig = $null
+if (-not (Test-Path $localConfig) -and (Test-Path $encConfig)) {
+    $tempConfig = Join-Path $env:TEMP ("trainsolve-creds-" + [guid]::NewGuid().ToString('N') + ".toml")
+    & python -B -m trainsolve decrypt-config --source $encConfig --to $tempConfig --force | Out-Null
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $tempConfig)) {
+        $localConfig = $tempConfig
+    } else {
+        Write-Host "   ! config.toml.enc 解密失败（换用户/换机器会这样），本次只按通用规则扫描" -ForegroundColor Yellow
+    }
+}
+try {
+    if (Test-Path $localConfig) {
+        $cfgText = [System.IO.File]::ReadAllText($localConfig)
+        foreach ($pattern in @('(?m)^\s*username\s*=\s*"([^"]+)"', '(?m)^\s*api_key\s*=\s*"([^"]+)"')) {
+            foreach ($match in [regex]::Matches($cfgText, $pattern)) {
+                $value = $match.Groups[1].Value
+                if ($value.Length -ge 6) {
+                    $secretForbidden += $value.Substring(0, [Math]::Min(8, $value.Length))
+                }
             }
         }
+        $secretForbidden = @($secretForbidden | Select-Object -Unique)
     }
-    $secretForbidden = @($secretForbidden | Select-Object -Unique)
+} finally {
+    if ($tempConfig -and (Test-Path $tempConfig)) {
+        Remove-Item $tempConfig -Force -ErrorAction SilentlyContinue
+    }
 }
 if ($secretForbidden.Count -eq 0) {
-    Write-Host "   ! 本机没有带凭据的 config.toml，本次只按通用规则扫描" -ForegroundColor Yellow
+    Write-Host "   ! 本机没有带凭据的 config.toml / config.toml.enc，本次只按通用规则扫描" -ForegroundColor Yellow
 }
 $emptyCredentialPatterns = @(
     'username\s*=\s*"[^"]+"', 'password\s*=\s*"[^"]+"', 'api_key\s*=\s*"[^"]+"'

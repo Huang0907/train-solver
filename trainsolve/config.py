@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import configcrypt
+
 DEFAULT_CONFIG_NAMES = ("config.toml", "trainsolve.toml")
 PORTABLE_MARKERS = ("portable.txt", "portable")
 CONFIG_ENV_VAR = "TRAINSOLVE_CONFIG"
@@ -41,6 +43,12 @@ def _portable_dir(app_dir: Path) -> Path | None:
     return None
 
 
+def _prefer_encrypted(candidate: Path) -> Path:
+    """同目录存在 `<name>.enc` 就用它：用户既然加密了，就不该再被明文抢先读到。"""
+    encrypted = configcrypt.encrypted_sibling(candidate)
+    return encrypted if encrypted is not None else candidate
+
+
 def resolve_config_path(
     explicit: str | None = None,
     *,
@@ -67,24 +75,24 @@ def resolve_config_path(
         path = Path(chosen).expanduser()
         if not path.is_absolute():
             path = (Path.cwd() / path).resolve()
-        if not path.exists():
+        if not path.exists() and configcrypt.encrypted_sibling(path) is None:
             raise ConfigSourceError(
                 f"指定的配置文件不存在：{path}（显式指定时不会静默回落到其它位置）"
             )
-        return ResolvedConfig(path=path, source="explicit")
+        return ResolvedConfig(path=_prefer_encrypted(path), source="explicit")
 
     port = Path(portable_dir) if portable_dir is not None else _portable_dir(app)
     if port is not None:
-        return ResolvedConfig(path=port / "config.toml", source="portable", portable=True)
+        return ResolvedConfig(path=_prefer_encrypted(port / "config.toml"), source="portable", portable=True)
 
     if is_frozen:
         for name in DEFAULT_CONFIG_NAMES:
             candidate = app / name
-            if candidate.exists():
-                return ResolvedConfig(path=candidate, source="program")
+            if candidate.exists() or configcrypt.encrypted_sibling(candidate) is not None:
+                return ResolvedConfig(path=_prefer_encrypted(candidate), source="program")
 
     base = Path(os.environ.get("APPDATA") or Path.home()) / "TrainSolve"
-    return ResolvedConfig(path=base / "config.toml", source="appdata")
+    return ResolvedConfig(path=_prefer_encrypted(base / "config.toml"), source="appdata")
 
 
 def find_config(explicit: str | None = None) -> Path | None:
@@ -271,7 +279,14 @@ def load_config_with_source(
     resolved = resolve_config_path(path)
     config = Config()
     if resolved.path.exists():
-        data = tomllib.loads(resolved.path.read_text(encoding="utf-8"))
+        try:
+            raw_text = configcrypt.read_config_text(resolved.path)
+        except configcrypt.ConfigCryptoError as exc:
+            raise ConfigSourceError(f"配置读取失败：{exc}") from exc
+        try:
+            data = tomllib.loads(raw_text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigSourceError(f"配置文件不是合法的 TOML：{resolved.path}（{exc}）") from exc
         _apply(data.get("platform"), config.platform, {"base_url", "username", "password", "timeout"})
         deepseek_section = data.get("deepseek") or {}
         _apply(deepseek_section, config.deepseek, {

@@ -26,10 +26,11 @@ from tkinter import messagebox, ttk
 
 from typing import Callable
 
-from . import __version__
+from . import __version__, configcrypt
 from .api import QBASE_NAMES, STATE_NAMES, ApiError, TrainClient, qtype_kind
 from .config import (
     Config,
+    ConfigSourceError,
     ModelEndpoint,
     ResolvedConfig,
     default_app_dir,
@@ -94,6 +95,18 @@ def settings_path(*, frozen: bool | None = None) -> Path:
     return config_resolution(frozen=frozen).path
 
 
+def settings_display_path(*, frozen: bool | None = None) -> Path:
+    """真正会落盘的那个文件名：DPAPI 可用时是 `config.toml.enc`。
+
+    设置页那行「配置将保存到：…」必须在**保存之前**就能说准（2026-11-11 界面指出：
+    首次保存前显示明文名、实际写的是 `.enc`，预测不准）。写盘与展示共用这一个函数。
+    """
+    path = settings_path() if frozen is None else settings_path(frozen=frozen)
+    if configcrypt.available() and not path.name.endswith(configcrypt.SUFFIX):
+        return path.with_name(path.name + configcrypt.SUFFIX)
+    return path
+
+
 def error_log_path() -> Path:
     """界面线程异常日志：与 config.toml 同目录。
 
@@ -140,8 +153,13 @@ def save_client_config(config: Config, log: Callable[[str], None] | None = None)
 
     0.5.2 那次仓库根的 config.toml 被静默改写就是缺这一行：事后没人说得清
     是哪个动作写的、写到哪个文件、覆盖掉了什么。
+
+    0.6.9 起**默认写加密文件**（`config.toml.enc`，Windows DPAPI、绑定当前用户）：
+    `settings_path()` 仍返回明文名（界面展示、日志、外部工具都按它找），
+    真正落盘时加 `.enc`，明文那份在加密写成功后删掉——不然加密等于白做。
     """
-    path = settings_path()
+    path = settings_display_path()
+    plain = settings_path()
     # 建目录放在这里（真正的写入方）：settings_path() 只回答路径，不再产生副作用。
     # 首次运行时 %APPDATA%\TrainSolve 可能还不存在。
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,13 +231,17 @@ human_delay_max = {config.run.human_delay_max}
 backspace_rate = {config.run.backspace_rate}
 backspace_max = {config.run.backspace_max}
 """
-    path.write_text(text, encoding="utf-8")
+    configcrypt.write_config_text(path, text, remove_plaintext=True)
     if log is not None:
         after = path.stat().st_size
         if existed:
             log(f"⚠ 已覆盖配置文件：{path}（原有 {before} B → 现在 {after} B）")
         else:
             log(f"已创建配置文件：{path}（{after} B）")
+        if path != plain:
+            if plain.exists():
+                log(f"已删除明文配置：{plain}（内容已加密写入上面那份）")
+            log("配置文件已加密（DPAPI，只有当前 Windows 用户能解；拷到别的机器打不开）")
 
 
 class EditorSolver:
@@ -640,10 +662,20 @@ class ClientApp(tk.Tk):
             try:
                 client = DeepSeekClient(
                     current.api_key, base_url=current.base_url, model=current.model,
-                    max_tokens=64, timeout=min(90.0, cfg.deepseek.timeout), retries=0, log=lambda *_: None,
+                    max_tokens=128, timeout=min(90.0, cfg.deepseek.timeout), retries=0, log=lambda *_: None,
                 )
-                reply = client.chat([{"role": "user", "content": "只回复两个字：可用"}], temperature=0)
-                self._set_model_test_result((True, f"✓ {current.model} 可用：{reply.strip()[:20]}"))
+                # 推理型模型会先花思维链：预算小时正文为空但思维链非空，
+                # 那也说明端点通（0.6.9 起不再把它当失败）。
+                detail = client.chat_detail(
+                    [{"role": "user", "content": "只回复两个字：可用"}], temperature=0, max_tokens=128,
+                )
+                note = (detail.get("content") or "").strip()
+                if note:
+                    self._set_model_test_result((True, f"✓ {current.model} 可用：{note[:20]}"))
+                else:
+                    self._set_model_test_result(
+                        (True, f"✓ {current.model} 可用（本轮只输出了思维链，正文被预算截断）")
+                    )
             except Exception as exc:  # noqa: BLE001
                 self._set_model_test_result((False, f"✗ {str(exc)[:100]}"))
 
@@ -842,6 +874,33 @@ class ClientApp(tk.Tk):
                 event.set()
         elif kind == "done":
             self._on_worker_done(payload)
+
+    def report_callback_exception(self, exc, val, tb) -> None:  # noqa: N802 - Tk 接口名
+        """Tk 回调里的未捕获异常：落盘 + 弹窗（2026-11-11 界面指出保存失败会「毫无反应」）。
+
+        打包版是 `console=False`：没有这个覆盖，DPAPI 加密失败这类异常只会进
+        Tk 内部处理，用户看到的是「点了保存没反应、对话框也不关」。
+        """
+        detail = "".join(traceback.format_exception(exc, val, tb))
+        try:
+            log_path = error_log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 界面回调异常\n{detail}\n")
+        except Exception:  # noqa: BLE001 - 记不下来也不能再抛
+            pass
+        try:
+            self._append(self.txt_log, f"⚠ 界面操作失败：{val}（详情见 {error_log_path()}）")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            messagebox.showerror(
+                "界面出错",
+                f"{val}\n\n详情已写入：{error_log_path()}",
+                parent=self,
+            )
+        except Exception:  # noqa: BLE001 - 弹窗本身失败就算了，日志已经落盘
+            pass
 
     def _log_ui_error(self, kind: str) -> None:
         """界面线程异常落盘：打包成 pythonw 后没有控制台，traceback 不写文件就等于消失。"""
@@ -1361,10 +1420,16 @@ class ModelDialog(tk.Toplevel):
             try:
                 client = DeepSeekClient(
                     endpoint.api_key, base_url=endpoint.base_url, model=endpoint.model,
-                    max_tokens=64, timeout=90, retries=0, log=lambda *_: None,
+                    max_tokens=128, timeout=90, retries=0, log=lambda *_: None,
                 )
-                reply = client.chat([{"role": "user", "content": "只回复两个字：可用"}], temperature=0)
-                self._result = (True, f"✓ 可用，回复：{reply.strip()[:20]}")
+                detail = client.chat_detail(
+                    [{"role": "user", "content": "只回复两个字：可用"}], temperature=0, max_tokens=128,
+                )
+                note = (detail.get("content") or "").strip()
+                if note:
+                    self._result = (True, f"✓ 可用，回复：{note[:20]}")
+                else:
+                    self._result = (True, "✓ 可用（本轮只输出了思维链，正文被预算截断）")
             except Exception as exc:  # noqa: BLE001
                 self._result = (False, f"✗ {str(exc)[:160]}")
 
@@ -1570,7 +1635,7 @@ class SettingsDialog(tk.Toplevel):
         self.var_gcc = tk.StringVar(value=cfg.run.gcc)
         ttk.Entry(frame, textvariable=self.var_gcc, width=46).grid(row=11, column=1, pady=4)
 
-        ttk.Label(frame, text=f"配置将保存到：{settings_path()}", foreground="#555",
+        ttk.Label(frame, text=f"配置将保存到：{settings_display_path()}", foreground="#555",
                   wraplength=420).grid(row=12, column=0, columnspan=2, pady=(8, 4), sticky="w")
 
         test_row = ttk.Frame(frame)
@@ -1662,8 +1727,31 @@ class SettingsDialog(tk.Toplevel):
         self.destroy()
 
 
+def _show_startup_error(message: str) -> None:
+    """启动期配置读不出来时也必须让用户看见（打包版 `console=False`，traceback 无处可去）。"""
+    text = (
+        f"{message}\n\n"
+        "可以这样恢复：\n"
+        "1) 把 config.toml.enc 改名或删掉，程序会用默认值启动，再在设置里重新填；\n"
+        "2) 这份 .enc 若是在别的 Windows 用户 / 别的机器上加密的，只能重新填；\n"
+        "3) 命令行排查：trainsolve decrypt-config --source <路径> --to <明文路径>"
+    )
+    print(text, file=sys.stderr)
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("配置读取失败", text, parent=root)
+        root.destroy()
+    except Exception:  # noqa: BLE001 - 连 Tk 都起不来时至少 stderr 有记录
+        pass
+
+
 def main() -> int:
-    app = ClientApp()
+    try:
+        app = ClientApp()
+    except (ConfigSourceError, configcrypt.ConfigCryptoError) as exc:
+        _show_startup_error(str(exc))
+        return 2
     app.mainloop()
     return 0
 

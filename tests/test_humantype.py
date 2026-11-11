@@ -10,6 +10,7 @@ from trainsolve.humantype import (
     TypingStopped,
     describe_human_pacing,
     first_diff,
+    is_probably_same,
     normalize_code,
     prepare_for_typing,
 )
@@ -485,6 +486,188 @@ class AdaptiveTypingTest(unittest.TestCase):
         typer._type_body("int x;", allow_typos=False)
         self.assertEqual(len(io.events), before, "内容已经对上就不该再按键")
         self.assertEqual(io.doc, "int x;")
+
+
+class CaretAutoCloseIO(FakeIO):
+    """模拟平台真实编辑器：自动补括号 + 真有光标位置。
+
+    敲 `(` 得到 `()`、光标夹在中间；接着敲 `)` 是「跳过」自动补的那个（不是插入）。
+    0.6.8 的读整行算法会把它当多余字符退格，于是永远打不完——这个假编辑器专门锁住它。
+    """
+
+    PAIRS = {"(": ")", "{": "}", "[": "]"}
+    CLOSERS = {")", "}", "]"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pos = 0
+        self.selected_all = False
+
+    # ---- 编辑动作
+    def type_char(self, ch: str) -> None:
+        self.events.append(("char", ch))
+        if self.selected_all:
+            self.doc = ""
+            self.pos = 0
+            self.selected_all = False
+        if ch in self.CLOSERS and self.pos < len(self.doc) and self.doc[self.pos] == ch:
+            self.pos += 1          # 跳过自动补的右半边
+            return
+        self.doc = self.doc[: self.pos] + ch + self.doc[self.pos:]
+        self.pos += 1
+        closer = self.PAIRS.get(ch)
+        if closer:
+            self.doc = self.doc[: self.pos] + closer + self.doc[self.pos:]
+
+    def press(self, key: str) -> None:
+        self.events.append(("key", key))
+        if key == "Control+a":
+            self.selected_all = True
+        elif key == "Backspace":
+            if self.selected_all:
+                self.doc = ""
+                self.pos = 0
+                self.selected_all = False
+            elif self.pos > 0:
+                self.doc = self.doc[: self.pos - 1] + self.doc[self.pos:]
+                self.pos -= 1
+        elif key == "Delete":
+            if self.selected_all:
+                self.doc = ""
+                self.pos = 0
+                self.selected_all = False
+            elif self.pos < len(self.doc):
+                self.doc = self.doc[: self.pos] + self.doc[self.pos + 1:]
+        elif key == "Enter":
+            self.doc = self.doc[: self.pos] + "\n" + self.doc[self.pos:]
+            self.pos += 1
+
+    # ---- 读取
+    def read_doc(self) -> str:
+        return self.doc
+
+    def cursor_line(self) -> dict:
+        start = self.doc.rfind("\n", 0, self.pos) + 1
+        end = self.doc.find("\n", self.pos)
+        if end == -1:
+            end = len(self.doc)
+        line = self.doc[start:end]
+        col = self.pos - start
+        return {
+            "doc": self.doc,
+            "line": line,
+            "col": col,
+            "before": line[:col],
+            "after": line[col:],
+        }
+
+
+class CaretAutoCloseTypingTest(unittest.TestCase):
+    """真实编辑器的自动补括号 + 光标跳过语义下，自适应打字必须收敛（0.6.9）。"""
+
+    CODE = "int main(void)\n{\n    return 0;\n}\n"
+
+    def test_自动补括号也能打完(self):
+        io = CaretAutoCloseIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        ok = typer.type_and_verify(self.CODE, rounds=1)
+        self.assertTrue(ok)
+        # 行首缩进交给编辑器的智能缩进，这里只要求正文一字不差
+        self.assertTrue(is_probably_same(io.doc, self.CODE), io.doc)
+
+    def test_光标后的自动补全尾巴会被Delete删掉(self):
+        io = CaretAutoCloseIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        typer._type_body("(", allow_typos=False)
+        self.assertEqual(io.doc, "(", "光标后的自动补 ) 必须被删掉，否则和编辑器对抗")
+        self.assertEqual(io.events[-1], ("key", "Delete"))
+
+
+class LosingFocusIO(CaretAutoCloseIO):
+    """模拟真机：打到一半编辑器丢焦点，按键全部打空，直到 ensure_focus 把焦点抢回来。"""
+
+    def __init__(self, lose_after: int = 12) -> None:
+        super().__init__()
+        self.lose_after = lose_after
+        self.keystrokes = 0
+        self.focused = True
+        self.lost_once = False
+        self.focus_calls = 0
+
+    def _note(self) -> None:
+        self.keystrokes += 1
+        # 只丢一次（真机就是前端重渲染那一下），抢回焦点后按键恢复正常
+        if self.focused and not self.lost_once and self.keystrokes > self.lose_after:
+            self.focused = False
+            self.lost_once = True
+
+    def type_char(self, ch: str) -> None:
+        self._note()
+        if not self.focused:
+            self.events.append(("lost-char", ch))
+            return
+        super().type_char(ch)
+
+    def press(self, key: str) -> None:
+        self._note()
+        if not self.focused:
+            self.events.append(("lost-key", key))
+            return
+        super().press(key)
+
+    def ensure_focus(self) -> str:
+        self.focus_calls += 1
+        self.focused = True
+        return "editor:cm-content"
+
+
+class SmartIndentIO(CaretAutoCloseIO):
+    """模拟平台编辑器的「智能缩进」：回车自动补 8 个空格，打 `{` 时整行重排。
+
+    2026-11-11 真机实测就是它把打字卡住的：硬要对齐 4 个空格会和编辑器无限拉锯，
+    最后把刚打的字符删光。产品口径：行首缩进不计（C 代码缩进不影响判分）。
+    """
+
+    def press(self, key: str) -> None:
+        super().press(key)
+        if key == "Enter":
+            self.doc = self.doc[: self.pos] + "        " + self.doc[self.pos:]
+            self.pos += 8
+
+    def type_char(self, ch: str) -> None:
+        super().type_char(ch)
+        if ch != "{":
+            return
+        start = self.doc.rfind("\n", 0, self.pos) + 1
+        end = self.doc.find("\n", self.pos)
+        end = len(self.doc) if end == -1 else end
+        line = self.doc[start:end]
+        stripped = line.lstrip(" ")
+        if len(line) == len(stripped) + 8:
+            return
+        new_line = " " * 8 + stripped
+        self.doc = self.doc[:start] + new_line + self.doc[end:]
+        self.pos += len(new_line) - len(line)
+
+
+class SmartIndentTypingTest(unittest.TestCase):
+    def test_智能缩进也能打完(self):
+        io = SmartIndentIO()
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        code = "int main(void)\n{\n    for (int i = 0; i < 3; i++) {\n        return i;\n    }\n}\n"
+        ok = typer.type_and_verify(code, rounds=1)
+        self.assertTrue(ok, f"智能缩进下必须能打完：{io.doc!r}")
+        self.assertTrue(is_probably_same(io.doc, code), io.doc)
+
+
+class FocusLossTest(unittest.TestCase):
+    def test_中途丢焦点也能靠自愈打完(self):
+        io = LosingFocusIO(lose_after=12)
+        typer, _ = make_typer(io, typo_rate=0.0, backspace_rate=0.0)
+        ok = typer.type_and_verify("int main(void)\n{\n    return n;\n}\n", rounds=1)
+        self.assertTrue(ok, "丢焦点后必须能自愈，否则整题白打")
+        self.assertGreater(io.focus_calls, 0, "应该主动调用过 ensure_focus")
+        self.assertTrue(is_probably_same(io.doc, "int main(void)\n{\n    return n;\n}"), io.doc)
 
 
 class HumanTyperTest(unittest.TestCase):
